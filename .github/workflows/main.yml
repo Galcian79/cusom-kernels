@@ -31,9 +31,17 @@ jobs:
           # Cambia o aggiungi chiavi se necessario
           gpg --recv-keys 38DBBDC86092693E 647F28654894E3BD
 
+      - name: Customize makepkg.conf
+        run: |
+          cp /etc/makepkg.conf ~/.makepkg.conf
+          sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS="-j$(nproc)"/' ~/.makepkg.conf
+          sed -i 's/^#PACKAGER=.*/PACKAGER="GitHub Actions <actions@github.com>"/' ~/.makepkg.conf
+
+
       - name: Build kernel
         run: |
-          makepkg -s --noconfirm
+          makepkg -s --noconfirm --config ~/.makepkg.conf
+
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
