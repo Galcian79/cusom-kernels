@@ -1,3 +1,11 @@
+name: Build and Release Custom Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
 jobs:
   build:
     name: Build Kernel in Arch Container
@@ -59,6 +67,7 @@ jobs:
           name: Linux Custom LTS v6.12.x
           body: |
             Build automatica del kernel Linux personalizzato basato su LTS 6.12.x.
+            Contiene file `.pkg.tar.zst` da installare con `pacman -U`.
           draft: false
           prerelease: false
         env:
