@@ -1,0 +1,87 @@
+name: Build and Release Custom Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write  # necessario per creare release con GITHUB_TOKEN
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-latest
+    container: archlinux:latest  # container SOLO per build
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git wget gnupg sudo
+
+      - name: Add build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder /__w
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build as builder
+        run: |
+          sudo -u builder bash -c "
+            mkdir -p ~/.gnupg
+            echo 'disable-ipv6' >> ~/.gnupg/dirmngr.conf
+            echo 'keyserver hkp://keyserver.ubuntu.com' >> ~/.gnupg/gpg.conf
+            gpg --recv-keys 38DBBDC86092693E 647F28654894E3BD || true
+            cp /etc/makepkg.conf ~/.makepkg.conf
+            sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS=\"-j$(nproc)\"/' ~/.makepkg.conf
+            sed -i 's|^PKGDEST=.*|PKGDEST=\"$PWD/artifacts\"|' ~/.makepkg.conf
+            mkdir -p artifacts
+            makepkg -s --noconfirm --config ~/.makepkg.conf
+          "
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build
+          path: artifacts/*.pkg.tar.zst
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout repository (for version context)
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-build
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: linux-custom-LTS-v6.12.x
+          name: Linux Custom LTS v6.12.x
+          body: |
+            Build automatica del kernel Linux personalizzato basato su LTS 6.12.x.
+            Installabile con `pacman -U`.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload package to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: linux-custom-LTS-v6.12.x
+          files: dist/*.pkg.tar.zst
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
