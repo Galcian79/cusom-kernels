@@ -1,4 +1,4 @@
-name: Build Custom Kernel
+name: Build and Release Custom Kernel
 
 on:
   workflow_dispatch:
@@ -12,45 +12,56 @@ jobs:
     container: archlinux:latest
 
     steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git wget gnupg sudo
 
-      - name: Create build user
+      - name: Add build user
         run: |
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder /__w
-          
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git wget gnupg
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup GPG (if needed for signing)
+      - name: Setup GPG
         run: |
-          mkdir -p ~/.gnupg
-          echo "disable-ipv6" >> ~/.gnupg/dirmngr.conf
-          echo "keyserver hkp://keyserver.ubuntu.com" >> ~/.gnupg/gpg.conf
-
-      - name: Import kernel GPG keys
-        run: |
-          # Cambia o aggiungi chiavi se necessario
-          gpg --recv-keys 38DBBDC86092693E 647F28654894E3BD
+          sudo -u builder bash -c "
+            mkdir -p ~/.gnupg
+            echo 'disable-ipv6' >> ~/.gnupg/dirmngr.conf
+            echo 'keyserver hkp://keyserver.ubuntu.com' >> ~/.gnupg/gpg.conf
+            gpg --recv-keys 38DBBDC86092693E 647F28654894E3BD || true
+          "
 
       - name: Build as non-root
         run: |
           sudo -u builder bash -c "
-            cd \$PWD
             cp /etc/makepkg.conf ~/.makepkg.conf
             sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS=\"-j$(nproc)\"/' ~/.makepkg.conf
-            sed -i 's|^PKGDEST=.*|PKGDEST=\"\$PWD/artifacts\"|' ~/.makepkg.conf
+            sed -i 's|^PKGDEST=.*|PKGDEST=\"$PWD/artifacts\"|' ~/.makepkg.conf
             mkdir -p artifacts
             makepkg -s --noconfirm --config ~/.makepkg.conf
           "
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: custom-kernel-packages
-          path: "*.pkg.tar.zst"
+          tag_name: linux-custom-LTS-v6.12.x
+          name: Linux Custom LTS v6.12.x
+          body: |
+            Build automatica del kernel Linux personalizzato basato su LTS 6.12.x.
+            Contiene file `.pkg.tar.zst` da installare con `pacman -U`.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload packages to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: linux-custom-LTS-v6.12.x
+          files: artifacts/*.pkg.tar.zst
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
