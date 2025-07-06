@@ -1,0 +1,42 @@
+name: Build Custom Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git wget gnupg
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup GPG (if needed for signing)
+        run: |
+          mkdir -p ~/.gnupg
+          echo "disable-ipv6" >> ~/.gnupg/dirmngr.conf
+          echo "keyserver hkp://keyserver.ubuntu.com" >> ~/.gnupg/gpg.conf
+
+      - name: Import kernel GPG keys
+        run: |
+          # Cambia o aggiungi chiavi se necessario
+          gpg --recv-keys 38DBBDC86092693E 647F28654894E3BD
+
+      - name: Build kernel
+        run: |
+          makepkg -s --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-kernel-packages
+          path: "*.pkg.tar.zst"
