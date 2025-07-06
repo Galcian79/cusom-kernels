@@ -8,9 +8,9 @@ on:
 
 jobs:
   build:
-    name: Build Kernel in Arch Container
+    name: Build Kernel
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: archlinux:latest  # ✅ container solo qui
 
     steps:
       - name: Install dependencies
@@ -27,7 +27,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup GPG and Build
+      - name: Build as builder
         run: |
           sudo -u builder bash -c "
             mkdir -p ~/.gnupg
@@ -54,6 +54,9 @@ jobs:
     needs: build
 
     steps:
+      - name: Checkout repository (for version context)
+        uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -67,13 +70,13 @@ jobs:
           name: Linux Custom LTS v6.12.x
           body: |
             Build automatica del kernel Linux personalizzato basato su LTS 6.12.x.
-            Contiene file `.pkg.tar.zst` da installare con `pacman -U`.
+            Installabile con `pacman -U`.
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload kernel package
+      - name: Upload package to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: linux-custom-LTS-v6.12.x
