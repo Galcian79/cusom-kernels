@@ -1,13 +1,10 @@
-name: Build and Release Custom Kernel
+name: Build Custom Kernel
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-
-permissions:
-  contents: write  # necessario per creare release con GITHUB_TOKEN
 
 jobs:
   build:
@@ -49,39 +46,3 @@ jobs:
         with:
           name: kernel-build
           path: artifacts/*.pkg.tar.zst
-
-  release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Checkout repository (for version context)
-        uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: kernel-build
-          path: dist
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: linux-custom-LTS-v6.12.x
-          name: Linux Custom LTS v6.12.x
-          body: |
-            Build automatica del kernel Linux personalizzato basato su LTS 6.12.x.
-            Installabile con `pacman -U`.
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload package to release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: linux-custom-LTS-v6.12.x
-          files: dist/*.pkg.tar.zst
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
