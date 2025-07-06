@@ -5,15 +5,15 @@ on:
   push:
     branches:
       - main
-      
+
 permissions:
-  contents: write 
+  contents: write  # necessario per creare release con GITHUB_TOKEN
 
 jobs:
   build:
     name: Build Kernel
     runs-on: ubuntu-latest
-    container: archlinux:latest  
+    container: archlinux:latest  # container SOLO per build
 
     steps:
       - name: Install dependencies
@@ -37,7 +37,6 @@ jobs:
             echo 'disable-ipv6' >> ~/.gnupg/dirmngr.conf
             echo 'keyserver hkp://keyserver.ubuntu.com' >> ~/.gnupg/gpg.conf
             gpg --recv-keys 38DBBDC86092693E 647F28654894E3BD || true
-
             cp /etc/makepkg.conf ~/.makepkg.conf
             sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS=\"-j$(nproc)\"/' ~/.makepkg.conf
             sed -i 's|^PKGDEST=.*|PKGDEST=\"$PWD/artifacts\"|' ~/.makepkg.conf
