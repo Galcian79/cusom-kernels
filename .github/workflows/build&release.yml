@@ -7,40 +7,40 @@ on:
       - main
 
 permissions:
-  contents: write  # necessario per creare release con GITHUB_TOKEN
+  contents: write
 
 jobs:
   build:
     name: Build Kernel
     runs-on: ubuntu-latest
-    container: archlinux:latest  # container SOLO per build
+    container: archlinux:latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git wget gnupg sudo
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Add build user
+      - name: Add build user and set ownership
         run: |
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          chown -R builder:builder /__w
+          chown -R builder:builder "${GITHUB_WORKSPACE}"
 
       - name: Build as builder
         run: |
-          sudo -u builder bash -c "
-            mkdir -p ~/.gnupg
+          sudo -u builder bash -lc "
+            cd \"${GITHUB_WORKSPACE}\"
+            mkdir -p ~/.gnupg artifacts
             echo 'disable-ipv6' >> ~/.gnupg/dirmngr.conf
             echo 'keyserver hkp://keyserver.ubuntu.com' >> ~/.gnupg/gpg.conf
-            gpg --recv-keys 38DBBDC86092693E 647F28654894E3BD || true
+            gpg --batch --recv-keys 38DBBDC86092693E 647F28654894E3BD || true
             cp /etc/makepkg.conf ~/.makepkg.conf
-            sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS=\"-j$(nproc)\"/' ~/.makepkg.conf
-            sed -i 's|^PKGDEST=.*|PKGDEST=\"$PWD/artifacts\"|' ~/.makepkg.conf
-            mkdir -p artifacts
+            sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS=\"-j\$(nproc)\"/' ~/.makepkg.conf
+            sed -i 's|^PKGDEST=.*|PKGDEST=\"\$PWD/artifacts\"|' ~/.makepkg.conf
             makepkg -s --noconfirm --config ~/.makepkg.conf
           "
 
@@ -52,8 +52,8 @@ jobs:
 
   release:
     name: Create GitHub Release
-    runs-on: ubuntu-latest
     needs: build
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository (for version context)
