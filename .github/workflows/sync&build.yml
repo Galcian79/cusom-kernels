@@ -2,8 +2,8 @@ name: Sync & Build Custom Kernel
 
 on:
   schedule:
-    - cron: '0 4 * * *'      # ogni giorno alle 04:00 UTC
-  workflow_dispatch:        # esecuzione manuale
+    - cron: '0 4 * * *'
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -17,10 +17,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 2        # serve per git show HEAD~1
+          fetch-depth: 2
 
       - name: Get latest LTS 6.12.x tag
         id: upstream
@@ -63,8 +62,7 @@ jobs:
     container: archlinux:latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Cache pacman packages
         uses: actions/cache@v3
@@ -78,6 +76,16 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git wget gnupg sudo
+
+      - name: Check disk space before build
+        run: df -h
+
+      - name: Cleanup unused files
+        run: |
+          pacman -Scc --noconfirm || true
+          rm -rf ~/.cache ~/.npm ~/.cargo ~/.local/share/Trash || true
+          docker system prune -af || true
+          df -h
 
       - name: Add build user and set ownership
         run: |
@@ -105,14 +113,16 @@ jobs:
           name: kernel-build
           path: artifacts/*.pkg.tar.zst
 
+      - name: Final cleanup
+        run: rm -rf ${{ github.workspace }}/*
+
   bump-version:
     name: Automatic Release Bump
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -120,8 +130,7 @@ jobs:
         id: bump
         run: |
           pkgver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
-          old_pkgver=$(git show HEAD~1:PKGBUILD \
-            | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
+          old_pkgver=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
           if [ "$pkgver" != "$old_pkgver" ]; then
             new_rel=1
           else
@@ -149,8 +158,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository (for version context)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
