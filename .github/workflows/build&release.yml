@@ -21,14 +21,14 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git wget gnupg sudo
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Add build user
         run: |
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder /__w
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
       - name: Build as builder
         run: |
