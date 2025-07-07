@@ -1,7 +1,9 @@
-name: Build and Release Custom Kernel
+name: Sync & Build Custom Kernel
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'      # ogni giorno alle 04:00 UTC
+  workflow_dispatch:        # esecuzione manuale
   push:
     branches:
       - main
@@ -10,8 +12,53 @@ permissions:
   contents: write
 
 jobs:
+  sync:
+    name: Sync LTS 6.12.x
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2        # serve per git show HEAD~1
+
+      - name: Get latest LTS 6.12.x tag
+        id: upstream
+        run: |
+          latest=$(git ls-remote --tags --refs \
+            https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
+            | grep 'refs/tags/v6\.12\.[0-9]\+$' \
+            | awk -F/ '{print $3}' \
+            | sed 's/^v//' \
+            | sort -V \
+            | tail -1)
+          echo "upstream=$latest" >> $GITHUB_OUTPUT
+
+      - name: Get current pkgver
+        id: current
+        run: |
+          pv=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
+          echo "current_pkgver=$pv" >> $GITHUB_OUTPUT
+
+      - name: Bump pkgver & reset pkgrel
+        if: ${{ steps.upstream.outputs.upstream != steps.current.outputs.current_pkgver }}
+        run: |
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.upstream.outputs.upstream }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+
+      - name: Commit & push sync
+        if: ${{ steps.upstream.outputs.upstream != steps.current.outputs.current_pkgver }}
+        uses: EndBug/add-and-commit@v9
+        with:
+          author_name: "github-actions[bot]"
+          author_email: "github-actions[bot]@users.noreply.github.com"
+          message: "ci: sync to Linux LTS ${{ steps.upstream.outputs.upstream }}"
+          add: PKGBUILD
+          push: true
+
   build:
     name: Build Kernel
+    needs: sync
     runs-on: ubuntu-latest
     container: archlinux:latest
 
@@ -69,21 +116,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract pkgver & bump/reset pkgrel
+      - name: Extract pkgver & compute pkgrel
         id: bump
         run: |
-          # current pkgver
           pkgver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
-          # previous pkgver from last commit
-          old_pkgver=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
+          old_pkgver=$(git show HEAD~1:PKGBUILD \
+            | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
           if [ "$pkgver" != "$old_pkgver" ]; then
             new_rel=1
           else
             current_rel=$(grep '^pkgrel=' PKGBUILD | cut -d= -f2)
             new_rel=$((current_rel + 1))
           fi
-          # update PKGBUILD and .SRCINFO
-          sed -i "s/^pkgrel=.*/pkgrel=$new_rel/" PKGBUILD
           makepkg --printsrcinfo > .SRCINFO
           echo "::set-output name=pkgver::$pkgver"
           echo "::set-output name=pkgrel::$new_rel"
@@ -98,7 +142,6 @@ jobs:
             PKGBUILD
             .SRCINFO
           push: true
-          default_author: false
 
   release:
     name: Create GitHub Release
