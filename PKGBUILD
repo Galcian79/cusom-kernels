@@ -65,6 +65,7 @@ prepare() {
   echo "-$pkgrel" > localversion.10-pkgrel
   echo "${pkgbase#linux}" > localversion.20-pkgname
 
+  # apply patches
   for src in "${source[@]}"; do
     file="${src%%::*}"
     file="${file##*/}"
@@ -73,22 +74,46 @@ prepare() {
     patch -Np1 < "../$file"
   done
 
-  # remove .git to avoid dirty flag
+  # avoid dirty flag
   rm -rf .git
 
-  echo "Setting config..."
+  # load base config and defaults
   cp ../config .config
+  make olddefconfig
 
-  # disable all debug info and BTF (core + modules)
+  # prune unused modules based on this container
+  echo "Pruning modules with localmodconfig"
+  make localmodconfig
+
+  # collect modules from lsmod
+  lsmod | tail -n +2 | awk '{print $1}' > /tmp/loaded-modules
+
+  # collect PCI drivers from lspci -k
+  lspci -k | grep -A1 "Kernel driver in use" | \
+    sed -n 's/.*Kernel driver in use: //p' >> /tmp/loaded-modules
+
+  # dedupe list
+  sort -u /tmp/loaded-modules -o /tmp/loaded-modules
+
+  # re-enable each needed module
+  echo "Re-enabling loaded modules in .config"
+  while read mod; do
+    key="CONFIG_${mod^^}"
+    scripts/config --file .config --module "$key"
+  done < /tmp/loaded-modules
+
+  # disable all debug info and BTF sections
   cat << 'EOF' >> .config
 CONFIG_DEBUG_INFO=n
 CONFIG_DEBUG_INFO_BTF=n
 CONFIG_DEBUG_INFO_BTF_MODULES=n
 EOF
 
+  # finalize minimal defconfig
   make olddefconfig
   diff -u ../config .config || :
 
+  # write out version
   make -s kernelrelease > version
   echo "Prepared $pkgbase version $(<version)"
 }
@@ -103,25 +128,32 @@ _package() {
   pkgdesc="The $pkgdesc kernel and modules"
   depends=(coreutils initramfs kmod)
   optdepends=(
-    'wireless-regdb: to set the correct wireless channels'
+    'wireless-regdb: to set correct wireless channels'
     'linux-firmware: firmware images for some devices'
   )
-  provides=(KSMBD-MODULE VIRTUALBOX-GUEST-MODULES WIREGUARD-MODULE)
-  replaces=(virtualbox-guest-modules-arch wireguard-arch)
+  provides=(
+    KSMBD-MODULE
+    VIRTUALBOX-GUEST-MODULES
+    WIREGUARD-MODULE
+  )
+  replaces=(
+    virtualbox-guest-modules-arch
+    wireguard-arch
+  )
 
   cd $_srcname
   local ver=$(<version)
   local modulesdir="$pkgdir/usr/lib/modules/$ver"
 
-  echo "Installing boot image..."
+  echo "Installing kernel image..."
   install -Dm644 "$(make -s image_name)" "$modulesdir/vmlinuz"
   echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
 
   echo "Installing modules..."
   ZSTD_CLEVEL=19 \
-    make INSTALL_MOD_STRIPSUBDIR=1 \
-      INSTALL_MOD_PATH="$pkgdir/usr" \
-      modules_install
+    make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 modules_install
+
+  # remove build symlink
   rm -f "$modulesdir"/build
 }
 
@@ -133,9 +165,11 @@ _package-headers() {
   local ver=$(<version)
   local builddir="$pkgdir/usr/lib/modules/$ver/build"
 
-  install -Dt "$builddir" -m644 .config Makefile Module.symvers \
-    System.map localversion.* version vmlinux \
+  echo "Installing build files..."
+  install -Dt "$builddir" -m644 \
+    .config Makefile Module.symvers System.map localversion.* version vmlinux \
     tools/bpf/bpftool/vmlinux.h
+
   install -Dt "$builddir/kernel" -m644 kernel/Makefile
   cp -a scripts "$builddir/scripts"
   ln -sr "$builddir" "$builddir/scripts/gdb/vmlinux-gdb.py"
@@ -143,15 +177,22 @@ _package-headers() {
   install -Dt "$builddir/tools/bpf/resolve_btfids" \
     tools/bpf/resolve_btfids/resolve_btfids
 
-  find include -type f -exec install -Dm644 {} "$builddir/{}" \;
-  find arch/x86/include -type f -exec install -Dm644 {} "$builddir/arch/x86/{}" \;
+  echo "Pruning headers..."
+  find include arch/x86/include -type f -exec install -Dm644 {} "$builddir/{}" \;
 
-  # cleanup and strip
+  echo "Stripping build tools..."
   find "$builddir" -name '*.o' -delete
   strip -v $STRIP_STATIC "$builddir/vmlinux"
 }
 
-pkgname=("$pkgbase" "$pkgbase-headers")
+pkgname=(
+  "$pkgbase"
+  "$pkgbase-headers"
+)
 for _p in "${pkgname[@]}"; do
-  eval "package_$_p() { _package${_p#$pkgbase}; }"
+  eval "package_$_p() {
+    $(declare -f "_package${_p#$pkgbase}")
+    _package${_p#$pkgbase}
+  }"
 done
+```
