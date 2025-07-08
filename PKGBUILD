@@ -79,10 +79,11 @@ prepare() {
   echo "Setting config..."
   cp ../config .config
 
-  # disable debug info and BTF to save space
+  # disable all debug info and BTF (core + modules)
   cat << 'EOF' >> .config
 CONFIG_DEBUG_INFO=n
 CONFIG_DEBUG_INFO_BTF=n
+CONFIG_DEBUG_INFO_BTF_MODULES=n
 EOF
 
   make olddefconfig
@@ -145,7 +146,7 @@ _package-headers() {
   find include -type f -exec install -Dm644 {} "$builddir/{}" \;
   find arch/x86/include -type f -exec install -Dm644 {} "$builddir/arch/x86/{}" \;
 
-  # cleanup
+  # cleanup and strip
   find "$builddir" -name '*.o' -delete
   strip -v $STRIP_STATIC "$builddir/vmlinux"
 }
