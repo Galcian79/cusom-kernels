@@ -93,19 +93,28 @@ jobs:
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder "${GITHUB_WORKSPACE}"
 
-      - name: Build as builder
+      - name: Build as builder (in /tmp, BTF disabled)
         run: |
           sudo -u builder bash -lc "
             rm -rf /tmp/build
             cp -r ${GITHUB_WORKSPACE} /tmp/build
             cd /tmp/build
+
+            # disable BTF to save space
+            sed -i 's/^CONFIG_DEBUG_INFO_BTF=.*/CONFIG_DEBUG_INFO_BTF=n/' .config || \
+              echo 'CONFIG_DEBUG_INFO_BTF=n' >> .config
+
             mkdir -p ~/.gnupg artifacts
             echo 'disable-ipv6' >> ~/.gnupg/dirmngr.conf
             echo 'keyserver hkp://keyserver.ubuntu.com' >> ~/.gnupg/gpg.conf
+
             cp /etc/makepkg.conf ~/.makepkg.conf
             sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS=\"-j\$(nproc)\"/' ~/.makepkg.conf
             sed -i 's|^PKGDEST=.*|PKGDEST=\"\$PWD/artifacts\"|' ~/.makepkg.conf
+
             makepkg -s --noconfirm --config ~/.makepkg.conf
+
+            # move built packages back to workspace
             mkdir -p ${GITHUB_WORKSPACE}/artifacts
             cp artifacts/*.pkg.tar.zst ${GITHUB_WORKSPACE}/artifacts/
           "
