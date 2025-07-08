@@ -96,15 +96,18 @@ jobs:
       - name: Build as builder
         run: |
           sudo -u builder bash -lc "
-            cd \"${GITHUB_WORKSPACE}\"
+            rm -rf /tmp/build
+            cp -r ${GITHUB_WORKSPACE} /tmp/build
+            cd /tmp/build
             mkdir -p ~/.gnupg artifacts
             echo 'disable-ipv6' >> ~/.gnupg/dirmngr.conf
             echo 'keyserver hkp://keyserver.ubuntu.com' >> ~/.gnupg/gpg.conf
-            gpg --batch --recv-keys 38DBBDC86092693E 647F28654894E3BD || true
             cp /etc/makepkg.conf ~/.makepkg.conf
             sed -i 's/^#MAKEFLAGS=.*/MAKEFLAGS=\"-j\$(nproc)\"/' ~/.makepkg.conf
             sed -i 's|^PKGDEST=.*|PKGDEST=\"\$PWD/artifacts\"|' ~/.makepkg.conf
             makepkg -s --noconfirm --config ~/.makepkg.conf
+            mkdir -p ${GITHUB_WORKSPACE}/artifacts
+            cp artifacts/*.pkg.tar.zst ${GITHUB_WORKSPACE}/artifacts/
           "
 
       - name: Upload artifacts
