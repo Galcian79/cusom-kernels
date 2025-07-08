@@ -7,27 +7,13 @@ pkgbase=linux-custom-LTS
 _tag=v6.12.36
 pkgver=6.12.36
 pkgrel=1
-pkgdesc="Linux custom LTS"
+pkgdesc="Custom Linux LTS kernel"
 arch=(x86_64)
 url="https://kernel.org/"
 license=(GPL-2.0-only)
 
-makedepends=(
-  bc
-  cpio
-  gettext
-  git
-  libelf
-  pahole
-  perl
-  python
-  tar
-  xz
-)
-options=(
-  !debug
-  !strip
-)
+makedepends=( bc cpio gettext git libelf pahole perl python tar xz )
+options=( !debug !strip )
 
 _srcname=linux
 source=(
@@ -55,121 +41,98 @@ sha256sums=(
 )
 
 export KBUILD_BUILD_HOST=archlinux
-export KBUILD_BUILD_USER=$pkgbase
-export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+-d @$SOURCE_DATE_EPOCH})"
+export KBUILD_BUILD_USER="$pkgbase"
+export KBUILD_BUILD_TIMESTAMP="$(date -u +'%Y-%m-%d %H:%M:%S %z')"
 
 prepare() {
-  cd $_srcname
+  cd "$_srcname"
 
-  echo "Setting version..."
-  echo "-$pkgrel" > localversion.10-pkgrel
-  echo "${pkgbase#linux}" > localversion.20-pkgname
+  # versioning
+  echo "-$pkgrel"            > localversion.10-pkgrel
+  echo "${pkgbase#linux}"    > localversion.20-pkgname
 
   # apply patches
   for src in "${source[@]}"; do
-    file="${src%%::*}"
-    file="${file##*/}"
-    [[ $file = *.patch ]] || continue
-    echo "Applying patch $file..."
-    patch -Np1 < "../$file"
+    f="${src##*/}"
+    [[ $f = *.patch ]] || continue
+    patch -Np1 < "../$f"
   done
 
-  # avoid dirty flag
-  rm -rf .git
+  rm -rf .git   # avoid dirty flag
 
-  # load base config and defaults
+  # base config
   cp ../config .config
   make olddefconfig
 
-  # prune unused modules based on this container
-  echo "Pruning modules with localmodconfig"
+  # strip all modules not in this container
   make localmodconfig
 
-  # collect modules from lsmod
-  lsmod | tail -n +2 | awk '{print $1}' > /tmp/loaded-modules
+  # gather running modules
+  lsmod | tail -n +2 | awk '{print $1}' > modules.list
 
-  # collect PCI drivers from lspci -k
-  lspci -k | grep -A1 "Kernel driver in use" | \
-    sed -n 's/.*Kernel driver in use: //p' >> /tmp/loaded-modules
+  # gather PCI drivers in use
+  lspci -k | grep -A1 "Kernel driver in use" \
+    | sed -n 's/.*Kernel driver in use: //p' >> modules.list
 
-  # dedupe list
-  sort -u /tmp/loaded-modules -o /tmp/loaded-modules
+  sort -u modules.list -o modules.list
 
-  # re-enable each needed module
-  echo "Re-enabling loaded modules in .config"
+  # re-enable each module
   while read mod; do
-    key="CONFIG_${mod^^}"
-    scripts/config --file .config --module "$key"
-  done < /tmp/loaded-modules
+    scripts/config --file .config --module "CONFIG_${mod^^}"
+  done < modules.list
 
-  # disable all debug info and BTF sections
-  cat << 'EOF' >> .config
+  # disable debug info + BTF
+cat << 'EOF' >> .config
 CONFIG_DEBUG_INFO=n
 CONFIG_DEBUG_INFO_BTF=n
 CONFIG_DEBUG_INFO_BTF_MODULES=n
 EOF
 
-  # finalize minimal defconfig
   make olddefconfig
   diff -u ../config .config || :
 
-  # write out version
   make -s kernelrelease > version
   echo "Prepared $pkgbase version $(<version)"
 }
 
 build() {
-  cd $_srcname
+  cd "$_srcname"
   make all
   make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
 }
 
-_package() {
+package_linux-custom-LTS() {
   pkgdesc="The $pkgdesc kernel and modules"
-  depends=(coreutils initramfs kmod)
+  depends=( coreutils initramfs kmod )
   optdepends=(
-    'wireless-regdb: to set correct wireless channels'
+    'wireless-regdb: set correct wireless channels'
     'linux-firmware: firmware images for some devices'
   )
-  provides=(
-    KSMBD-MODULE
-    VIRTUALBOX-GUEST-MODULES
-    WIREGUARD-MODULE
-  )
-  replaces=(
-    virtualbox-guest-modules-arch
-    wireguard-arch
-  )
 
-  cd $_srcname
-  local ver=$(<version)
-  local modulesdir="$pkgdir/usr/lib/modules/$ver"
+  cd "$_srcname"
+  ver=$(<version)
+  dest="$pkgdir/usr/lib/modules/$ver"
 
-  echo "Installing kernel image..."
-  install -Dm644 "$(make -s image_name)" "$modulesdir/vmlinuz"
-  echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
+  install -Dm644 "$(make -s image_name)" "$dest/vmlinuz"
+  echo "$pkgbase" | install -Dm644 /dev/stdin "$dest/pkgbase"
 
-  echo "Installing modules..."
   ZSTD_CLEVEL=19 \
     make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 modules_install
 
-  # remove build symlink
-  rm -f "$modulesdir"/build
+  rm -f "$dest/build"
 }
 
-_package-headers() {
-  pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel"
-  depends=(pahole)
+package_linux-custom-LTS-headers() {
+  pkgdesc="Headers for the $pkgdesc kernel"
+  depends=( pahole )
 
-  cd $_srcname
-  local ver=$(<version)
-  local builddir="$pkgdir/usr/lib/modules/$ver/build"
+  cd "$_srcname"
+  ver=$(<version)
+  builddir="$pkgdir/usr/lib/modules/$ver/build"
 
-  echo "Installing build files..."
   install -Dt "$builddir" -m644 \
     .config Makefile Module.symvers System.map localversion.* version vmlinux \
     tools/bpf/bpftool/vmlinux.h
-
   install -Dt "$builddir/kernel" -m644 kernel/Makefile
   cp -a scripts "$builddir/scripts"
   ln -sr "$builddir" "$builddir/scripts/gdb/vmlinux-gdb.py"
@@ -177,22 +140,10 @@ _package-headers() {
   install -Dt "$builddir/tools/bpf/resolve_btfids" \
     tools/bpf/resolve_btfids/resolve_btfids
 
-  echo "Pruning headers..."
-  find include arch/x86/include -type f -exec install -Dm644 {} "$builddir/{}" \;
-
-  echo "Stripping build tools..."
+  find include arch/x86/include -type f \
+    -exec install -Dm644 {} "$builddir/{}" \;
   find "$builddir" -name '*.o' -delete
   strip -v $STRIP_STATIC "$builddir/vmlinux"
 }
 
-pkgname=(
-  "$pkgbase"
-  "$pkgbase-headers"
-)
-for _p in "${pkgname[@]}"; do
-  eval "package_$_p() {
-    $(declare -f "_package${_p#$pkgbase}")
-    _package${_p#$pkgbase}
-  }"
-done
-```
+pkgname=( linux-custom-LTS linux-custom-LTS-headers )
