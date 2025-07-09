@@ -5,10 +5,10 @@
 # Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
 
 
-pkgbase=linux-custom-LTS       # Build kernel with a different name
+pkgbase=linux-custom-test       # Build kernel with a different name
 _tag=v6.12.36
 pkgver=6.12.36
-pkgrel=2
+pkgrel=1
 pkgdesc="Linux custom LTS"
 arch=(x86_64)
 url="https://kernel.org/"
@@ -40,6 +40,7 @@ _srcname=linux
 source=(
   "$_srcname::git+https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git#tag=$_tag"
   config         # the main kernel config file
+  modprobed.db   # well populated database of external modules
   0006.patch     # ACS override for iommu patch
   0007-futex.patch  # futex_wait_multiple patch
   0007-nt.patch  # nt synchronization primitives patch
@@ -89,7 +90,7 @@ prepare() {
   diff -u ../config .config || :
 
   # make use of modprobed-db to drastically reduce kernel size and speed up compilation time
-  yes "" | make LSMOD=$HOME/.config/modprobed.db localmodconfig
+  yes "" | make LSMOD=modprobed.db localmodconfig
 
 
   make -s kernelrelease > version
