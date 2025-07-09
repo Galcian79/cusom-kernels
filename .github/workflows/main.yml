@@ -1,4 +1,4 @@
-# .github/workflows/pacman.yml
+# .github/workflows/build-pacman-repo.yml
 
 name: Build & Publish Pacman Repo
 
@@ -19,9 +19,10 @@ jobs:
   sync:
     name: Sync PKGBUILD to upstream v6.12.x
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.get_tag.outputs.latest }}
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Fetch latest 6.12.x tag
         id: get_tag
@@ -42,7 +43,7 @@ jobs:
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/"                          PKGBUILD
 
       - name: Commit version bump
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
@@ -56,10 +57,12 @@ jobs:
     needs: sync
     runs-on: ubuntu-latest
     container: archlinux:latest
+    outputs:
+      pkgver: ${{ steps.calc.outputs.pkgver }}
+      pkgrel: ${{ steps.calc.outputs.pkgrel }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
@@ -72,31 +75,44 @@ jobs:
         run: |
           useradd -m builder
           echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
-          chown -R builder:builder $GITHUB_WORKSPACE
 
-      - name: Prepare build directory
-        run: sudo -u builder mkdir -p ~/build
+      - name: Copy sources to builder's home
+        run: |
+          mkdir -p /home/builder/build
+          cp -r $GITHUB_WORKSPACE/* /home/builder/build/
+          chown -R builder:builder /home/builder/build
 
-      - name: Copy sources for build
-        run: sudo -u builder cp -r $GITHUB_WORKSPACE/* ~/build/
-
-      - name: Package build
+      - name: Build packages as builder
         run: |
           sudo -u builder bash -c '
-            cd ~/build
+            cd /home/builder/build
             updpkgsums
             makepkg -s --noconfirm
           '
 
+      - name: Compute new pkgrel
+        id: calc
+        run: |
+          ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
+          prev=$(git show HEAD~1:PKGBUILD \
+                   | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
+          if [[ "$ver" != "$prev" ]]; then
+            rel=1
+          else
+            rel=$(( $(grep '^pkgrel=' PKGBUILD|cut -d= -f2)+1 ))
+          fi
+          echo "pkgver=$ver" >> $GITHUB_OUTPUT
+          echo "pkgrel=$rel" >> $GITHUB_OUTPUT
+
       - name: Collect artifacts
         run: |
-          sudo -u builder bash -c 'mkdir -p ~/build/artifacts && mv ~/build/*.pkg.tar.zst ~/build/artifacts/'
-        # copy into workspace for actions
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+          mkdir -p artifacts
+          cp /home/builder/build/*.pkg.tar.zst artifacts/
+
+      - uses: actions/upload-artifact@v4
         with:
           name: pkgs
-          path: ~/build/artifacts/*.pkg.tar.zst
+          path: artifacts/*.pkg.tar.zst
 
   publish:
     name: Publish to gh-pages Pacman repo
@@ -104,12 +120,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout gh-pages
+      - name: Checkout gh-pages branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ env.REPO_BRANCH }}
           persist-credentials: true
           fetch-depth: 0
-          ref: ${{ env.REPO_BRANCH }}
 
       - name: Download built packages
         uses: actions/download-artifact@v4
@@ -127,7 +143,7 @@ jobs:
           cd repo
           repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst
 
-      - name: Commit & push gh-pages
+      - name: Commit & push to gh-pages
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
