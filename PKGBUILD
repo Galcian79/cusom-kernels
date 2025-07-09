@@ -25,7 +25,7 @@ validpgpkeys=(
   647F28654894E3BD457199BE38DBBDC86092693E
   83BC8889351B5DEBBB68416EB8AC08600F108CDF
 )
-sha256sums=('SKIP'  # git source
+sha256sums=('SKIP'
   '50cafbdd5b1aa8b3497034fe351f02e1891d0a33274eadc8afd0c784ccc5a2a3'
   '122139befc3da25b00b5119e9a2fc59b266ed0de53f36912e9e60f3287c479d6'
   '9df628fd530950e37d31da854cb314d536f33c83935adf5c47e71266a55f7004'
@@ -40,9 +40,8 @@ export KBUILD_BUILD_TIMESTAMP="$(date -u +'%Y-%m-%d %H:%M:%S %z')"
 
 prepare() {
   cd "$_srcname"
-
-  echo "-$pkgrel" > localversion.10-pkgrel
-  echo "${pkgbase#linux}" > localversion.20-pkgname
+  echo "-$pkgrel"                        > localversion.10-pkgrel
+  echo "${pkgbase#linux}"                > localversion.20-pkgname
 
   for src in "${source[@]}"; do
     [[ $src = *.patch ]] || continue
@@ -54,7 +53,7 @@ prepare() {
   make olddefconfig
   make localmodconfig
 
-  echo "Forcing DKMS-compatible module config"
+  # force DKMS-friendly flags
   scripts/config --file .config \
     --enable CONFIG_MODULES \
     --enable CONFIG_MODVERSIONS \
@@ -65,14 +64,16 @@ prepare() {
     --enable CONFIG_USB_SUPPORT \
     --enable CONFIG_BLK_DEV
 
+  # re-enable hardware modules
   lsmod | tail -n +2 | awk '{print $1}' > modules.list
-  lspci -k | grep -A1 "Kernel driver in use" | \
-    sed -n 's/.*Kernel driver in use: //p' >> modules.list
+  lspci -k | grep -A1 "Kernel driver in use" \
+    | sed -n 's/.*Kernel driver in use: //p' >> modules.list
   sort -u modules.list -o modules.list
   while read mod; do
     scripts/config --file .config --module "CONFIG_${mod^^}"
   done < modules.list
 
+  # disable debug & BTF
   cat << 'EOF' >> .config
 CONFIG_DEBUG_INFO=n
 CONFIG_DEBUG_INFO_BTF=n
@@ -85,7 +86,7 @@ EOF
 
 build() {
   cd "$_srcname"
-  make -j$(nproc)
+  make -j"$(nproc)"
 }
 
 package_linux-custom-test() {
@@ -108,30 +109,36 @@ package_linux-custom-test() {
 }
 
 package_linux-custom-test-headers() {
-  pkgdesc="Header files for $pkgbase to build external modules"
+  pkgdesc="Header files and scripts to build external modules for $pkgbase"
   depends=(pahole)
+  provides=(linux-headers)
 
   cd "$_srcname"
   ver=$(<version)
   builddir="$pkgdir/usr/lib/modules/$ver/build"
 
-  install -Dt "$builddir" -m644 \
-    .config Makefile Module.symvers System.map version vmlinux \
-    localversion.* tools/bpf/bpftool/vmlinux.h 2>/dev/null || true
+  # core build files
+  install -Dm644 .config             "$builddir/.config"
+  install -Dm644 Makefile            "$builddir/Makefile"
+  install -Dm644 Module.symvers      "$builddir/Module.symvers"
+  install -Dm644 System.map          "$builddir/System.map"
+  install -Dm644 version             "$builddir/version"
+  install -Dm644 localversion.*      "$builddir/"
 
-  install -Dt "$builddir/kernel" -m644 kernel/Makefile
-  cp -a scripts "$builddir/scripts"
+  # C headers for kernel and arch/x86
+  install -d "$builddir/include"
+  cp -a include/*       "$builddir/include/"
+  cp -a arch/x86/include/* "$builddir/include/"
 
-  install -Dt "$builddir/tools/objtool" tools/objtool/objtool
-  install -Dt "$builddir/tools/bpf/resolve_btfids" tools/bpf/resolve_btfids/resolve_btfids 2>/dev/null || true
-
-  find include arch/x86/include -type f -exec install -Dm644 {} "$builddir/{}" \;
+  # user-space headers
+  make headers_install INSTALL_HDR_PATH="$pkgdir/usr"
 
   # symlink for DKMS
-  ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
+  mkdir -p "$pkgdir/usr/src"
+  ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase-$ver"
 
+  # clean up
   find "$builddir" -name '*.o' -delete
-  strip -v $STRIP_STATIC "$builddir/vmlinux"
 }
 
 pkgname=(linux-custom-test linux-custom-test-headers)
