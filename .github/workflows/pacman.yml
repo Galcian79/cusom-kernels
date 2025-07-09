@@ -1,0 +1,71 @@
+# .github/workflows/pacman.yml
+
+name: Build & Publish Pacman Repo
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+permissions:
+  contents: write
+
+env:
+  PKGBASE: linux-custom-test
+  REPO_BRANCH: gh-pages
+
+jobs:
+  sync:
+    # … (stessi step di sync v6.12.x)
+
+  build:
+    # … (stessi step di build e artefatti)
+
+  publish:
+    name: Publish to gh-pages Pacman repo
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git user
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Ensure gh-pages branch exists
+        run: |
+          # prova a recuperare gh-pages; se manca lo crea
+          if git ls-remote --exit-code origin ${REPO_BRANCH}; then
+            git checkout ${REPO_BRANCH}
+          else
+            git checkout --orphan ${REPO_BRANCH}
+            git rm -rf .
+            git commit --allow-empty -m "Init ${REPO_BRANCH} branch"
+            git push origin ${REPO_BRANCH}
+          fi
+
+      - name: Download built packages
+        uses: actions/download-artifact@v4
+        with:
+          name: pkgs
+          path: repo
+
+      - name: Organize repo structure
+        run: |
+          mkdir -p repo/x86_64
+          mv repo/*.pkg.tar.zst repo/x86_64/
+
+      - name: Update Pacman DB
+        run: |
+          cd repo
+          repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst
+
+      - name: Commit & push changes
+        run: |
+          git add repo/
+          git commit -m "repo: add ${PKGBASE} v${{ needs.build.outputs.pkgver }}-r${{ needs.build.outputs.pkgrel }}"
+          git push origin ${REPO_BRANCH}
