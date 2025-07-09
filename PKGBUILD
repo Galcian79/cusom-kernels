@@ -47,41 +47,29 @@ export KBUILD_BUILD_TIMESTAMP="$(date -u +'%Y-%m-%d %H:%M:%S %z')"
 prepare() {
   cd "$_srcname"
 
-  # versioning
-  echo "-$pkgrel"            > localversion.10-pkgrel
-  echo "${pkgbase#linux}"    > localversion.20-pkgname
+  echo "-$pkgrel" > localversion.10-pkgrel
+  echo "${pkgbase#linux}" > localversion.20-pkgname
 
-  # apply patches
   for src in "${source[@]}"; do
-    f="${src##*/}"
-    [[ $f = *.patch ]] || continue
+    f="${src##*/}"; [[ $f = *.patch ]] || continue
     patch -Np1 < "../$f"
   done
+  rm -rf .git
 
-  rm -rf .git   # avoid dirty flag
-
-  # base config
   cp ../config .config
   make olddefconfig
 
-  # strip all modules not in this container
   make localmodconfig
 
-  # gather running modules
   lsmod | tail -n +2 | awk '{print $1}' > modules.list
-
-  # gather PCI drivers in use
   lspci -k | grep -A1 "Kernel driver in use" \
     | sed -n 's/.*Kernel driver in use: //p' >> modules.list
-
   sort -u modules.list -o modules.list
 
-  # re-enable each module
   while read mod; do
     scripts/config --file .config --module "CONFIG_${mod^^}"
   done < modules.list
 
-  # disable debug info + BTF
 cat << 'EOF' >> .config
 CONFIG_DEBUG_INFO=n
 CONFIG_DEBUG_INFO_BTF=n
@@ -98,19 +86,13 @@ EOF
 build() {
   cd "$_srcname"
   make all
-  make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
+  # bpftool vmlinux.h requires BTF; saltiamo questo passo
+  echo "Skipping tools/bpf vmlinux.h (BTF disabled)"
 }
 
 package_linux-custom-LTS() {
-  pkgdesc="The $pkgdesc kernel and modules"
-  depends=( coreutils initramfs kmod )
-  optdepends=(
-    'wireless-regdb: set correct wireless channels'
-    'linux-firmware: firmware images for some devices'
-  )
-
   cd "$_srcname"
-  ver=$(<version)
+  ver=$(<../version)
   dest="$pkgdir/usr/lib/modules/$ver"
 
   install -Dm644 "$(make -s image_name)" "$dest/vmlinuz"
@@ -123,25 +105,16 @@ package_linux-custom-LTS() {
 }
 
 package_linux-custom-LTS-headers() {
-  pkgdesc="Headers for the $pkgdesc kernel"
-  depends=( pahole )
-
   cd "$_srcname"
-  ver=$(<version)
+  ver=$(<../version)
   builddir="$pkgdir/usr/lib/modules/$ver/build"
 
   install -Dt "$builddir" -m644 \
-    .config Makefile Module.symvers System.map localversion.* version vmlinux \
-    tools/bpf/bpftool/vmlinux.h
-  install -Dt "$builddir/kernel" -m644 kernel/Makefile
-  cp -a scripts "$builddir/scripts"
-  ln -sr "$builddir" "$builddir/scripts/gdb/vmlinux-gdb.py"
-  install -Dt "$builddir/tools/objtool" tools/objtool/objtool
-  install -Dt "$builddir/tools/bpf/resolve_btfids" \
-    tools/bpf/resolve_btfids/resolve_btfids
+    .config Makefile Module.symvers System.map localversion.* version vmlinux
 
   find include arch/x86/include -type f \
     -exec install -Dm644 {} "$builddir/{}" \;
+
   find "$builddir" -name '*.o' -delete
   strip -v $STRIP_STATIC "$builddir/vmlinux"
 }
