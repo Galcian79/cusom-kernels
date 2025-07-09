@@ -3,11 +3,11 @@
 # Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
 #
 
-pkgbase=linux-custom-LTS
+pkgbase=linux-custom-test
 _tag=v6.12.36
 pkgver=6.12.36
 pkgrel=1
-pkgdesc="Custom Linux LTS kernel"
+pkgdesc="Custom Linux LTS kernel (test)"
 arch=(x86_64)
 url="https://kernel.org/"
 license=(GPL-2.0-only)
@@ -31,7 +31,7 @@ validpgpkeys=(
   83BC8889351B5DEBBB68416EB8AC08600F108CDF
 )
 sha256sums=(
-  '17dd9695fcd3569f1ce9980df1647cc18e2c4a97b7c4ad8454541b6c1811015f'
+  'SKIP' # git source
   '50cafbdd5b1aa8b3497034fe351f02e1891d0a33274eadc8afd0c784ccc5a2a3'
   '122139befc3da25b00b5119e9a2fc59b266ed0de53f36912e9e60f3287c479d6'
   '9df628fd530950e37d31da854cb314d536f33c83935adf5c47e71266a55f7004'
@@ -47,66 +47,85 @@ export KBUILD_BUILD_TIMESTAMP="$(date -u +'%Y-%m-%d %H:%M:%S %z')"
 prepare() {
   cd "$_srcname"
 
-  echo "-$pkgrel" > localversion.10-pkgrel
-  echo "${pkgbase#linux}" > localversion.20-pkgname
+  # versioning
+  echo "-$pkgrel"            > localversion.10-pkgrel
+  echo "${pkgbase#linux}"    > localversion.20-pkgname
 
+  # apply patches
   for src in "${source[@]}"; do
-    f="${src##*/}"; [[ $f = *.patch ]] || continue
+    f="${src##*/}"
+    [[ $f = *.patch ]] || continue
     patch -Np1 < "../$f"
   done
   rm -rf .git
 
+  # base config + defaults
   cp ../config .config
   make olddefconfig
 
+  # prune unused modules
   make localmodconfig
 
+  # collect loaded modules and PCI drivers
   lsmod | tail -n +2 | awk '{print $1}' > modules.list
   lspci -k | grep -A1 "Kernel driver in use" \
     | sed -n 's/.*Kernel driver in use: //p' >> modules.list
   sort -u modules.list -o modules.list
 
+  # re-enable only those modules
   while read mod; do
     scripts/config --file .config --module "CONFIG_${mod^^}"
   done < modules.list
 
-cat << 'EOF' >> .config
+  # disable debug/BTF
+  cat << 'EOF' >> .config
 CONFIG_DEBUG_INFO=n
 CONFIG_DEBUG_INFO_BTF=n
 CONFIG_DEBUG_INFO_BTF_MODULES=n
 EOF
 
+  # finalize minimal defconfig
   make olddefconfig
-  diff -u ../config .config || :
+  diff -u ../config .config || true
 
+  # record version
   make -s kernelrelease > version
   echo "Prepared $pkgbase version $(<version)"
 }
 
 build() {
   cd "$_srcname"
-  make all
-  # bpftool vmlinux.h requires BTF; saltiamo questo passo
+  make -j"$(nproc)"
   echo "Skipping tools/bpf vmlinux.h (BTF disabled)"
 }
 
-package_linux-custom-LTS() {
+package_linux-custom-test() {
+  pkgdesc="The $pkgdesc kernel and modules"
+  depends=( coreutils initramfs kmod )
+  optdepends=(
+    'wireless-regdb: set correct wireless channels'
+    'linux-firmware: firmware images for some devices'
+  )
+
   cd "$_srcname"
-  ver=$(<../version)
+  ver=$(<version)
   dest="$pkgdir/usr/lib/modules/$ver"
 
-  install -Dm644 "$(make -s image_name)" "$dest/vmlinuz"
+  install -Dm644 arch/x86/boot/bzImage "$dest/vmlinuz"
   echo "$pkgbase" | install -Dm644 /dev/stdin "$dest/pkgbase"
 
   ZSTD_CLEVEL=19 \
     make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 modules_install
 
-  rm -f "$dest/build"
+  rm -f "$dest"/build
 }
 
-package_linux-custom-LTS-headers() {
+package_linux-custom-test-headers() {
+  pkgdesc="Headers for the $pkgdesc kernel"
+  depends=( pahole )
+
   cd "$_srcname"
-  ver=$(<../version)
+  ver=$(<version)
   builddir="$pkgdir/usr/lib/modules/$ver/build"
 
   install -Dt "$builddir" -m644 \
@@ -119,4 +138,4 @@ package_linux-custom-LTS-headers() {
   strip -v $STRIP_STATIC "$builddir/vmlinux"
 }
 
-pkgname=( linux-custom-LTS linux-custom-LTS-headers )
+pkgname=( linux-custom-test linux-custom-test-headers )
