@@ -90,7 +90,7 @@ prepare() {
   diff -u ../config .config || :
 
   # make use of modprobed-db to drastically reduce kernel size and speed up compilation time
-  yes "" | make LSMOD=../localmodconfig
+  yes "" | make LSMOD=../modprobed.db localmodconfig
 
 
   make -s kernelrelease > version
