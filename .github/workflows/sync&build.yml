@@ -16,10 +16,11 @@ env:
 jobs:
 
   sync:
-    name: Sync PKGBUILD with upstream v6.12.x
+    name: Sync PKGBUILD to upstream v6.12.x
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Fetch latest 6.12.x tag
         id: get_tag
@@ -55,8 +56,10 @@ jobs:
     needs: sync
     runs-on: ubuntu-latest
     container: archlinux:latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
@@ -72,18 +75,23 @@ jobs:
           chown -R builder:builder $GITHUB_WORKSPACE
 
       - name: Import GPG private key
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
         env:
           GPG_KEY:       ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           mkdir -p ~/.gnupg
-          cat >> ~/.gnupg/gpg.conf <<EOF
-          use-agent
-          pinentry-mode loopback
-          EOF
-          echo "$GPG_KEY" | gpg --batch --import
-          # replace with your real key ID
+          chmod 700 ~/.gnupg
+          cat > ~/.gnupg/gpg.conf <<'EOF'
+use-agent
+pinentry-mode loopback
+EOF
+          printf '%s\n' "$GPG_KEY" > private.key
+          gpg --batch --yes --passphrase "$GPG_PASSPHRASE" --import private.key
+          shred -u private.key
+          KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')
           echo "6DA12D86BD20DD8E" | gpg --import-ownertrust
+          gpg --list-keys
 
       - name: Build with makepkg (--sign)
         run: |
@@ -91,13 +99,10 @@ jobs:
             mkdir -p ~/build
             cp -r \$GITHUB_WORKSPACE/* ~/build/
             cd ~/build
-            # use your repo’s makepkg.conf
+            # use repo’s makepkg.conf (only override signing settings)
             cp makepkg.conf ~/.makepkg.conf
-            # update checksums
             updpkgsums
-            # build & sign packages
-            makepkg --config ~/.makepkg.conf -s --noconfirm --sign
-            # collect artifacts
+            makepkg -s --noconfirm --sign
             mkdir -p \$GITHUB_WORKSPACE/artifacts
             cp *.pkg.tar.zst* \$GITHUB_WORKSPACE/artifacts/
           "
@@ -120,57 +125,9 @@ jobs:
       pkgrel: ${{ steps.calc.outputs.pkgrel }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Compute new pkgrel
         id: calc
         run: |
-          ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
-          prev=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' \
-                   | cut -d= -f2 2>/dev/null || echo "")
-          if [[ "$ver" != "$prev" ]]; then
-            rel=1
-          else
-            rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2) + 1 ))
-          fi
-          echo "pkgver=$ver" >> $GITHUB_OUTPUT
-          echo "pkgrel=$rel" >> $GITHUB_OUTPUT
-          echo "$ver-$rel" > .tag
-
-      - name: Commit bump
-        uses: EndBug/add-and-commit@v9
-        with:
-          message: "ci: bump to ${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}"
-          add: |
-            PKGBUILD
-            .tag
-
-  release:
-    name: Publish GitHub Release
-    needs: bump
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: kernel-packages
-          path: dist
-
-      - name: List release assets
-        run: ls -lh dist/
-
-      - name: Create & upload GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.PKGBASE }}-${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}
-          name: ${{ env.PKGBASE }} ${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}
-          body: |
-            Custom LTS kernel built with modprobed.db.
-            Version: ${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}
-            Install via pacman -U *.pkg.tar.zst
-          files: dist/*.pkg.tar.zst*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
