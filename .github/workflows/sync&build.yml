@@ -10,13 +10,13 @@ permissions:
 
 jobs:
   sync:
-    name: Sync latest LTS tag
+    name: Sync kernel version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get latest upstream tag
-        id: latest
+      - name: Get latest LTS 6.12 tag
+        id: tag
         run: |
           tag=$(git ls-remote --tags --refs https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
             | grep 'refs/tags/v6\.12\.[0-9]\+$' \
@@ -26,28 +26,25 @@ jobs:
 
       - name: Read current version
         id: current
-        run: |
-          pv=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
-          echo "pkgver=$pv" >> $GITHUB_OUTPUT
+        run: echo "pkgver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)" >> $GITHUB_OUTPUT
 
-      - name: Update PKGBUILD if newer tag exists
-        if: ${{ steps.latest.outputs.tag != steps.current.outputs.pkgver }}
+      - name: Update PKGBUILD if new version found
+        if: ${{ steps.tag.outputs.tag != steps.current.outputs.pkgver }}
         run: |
-          sed -i "s/^pkgver=.*/pkgver=${{ steps.latest.outputs.tag }}/" PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.tag.outputs.tag }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
 
-      - name: Commit sync changes
-        if: ${{ steps.latest.outputs.tag != steps.current.outputs.pkgver }}
+      - name: Commit update
+        if: ${{ steps.tag.outputs.tag != steps.current.outputs.pkgver }}
         uses: EndBug/add-and-commit@v9
         with:
-          message: "ci: sync PKGBUILD to ${{ steps.latest.outputs.tag }}"
+          message: "ci: sync to kernel ${{ steps.tag.outputs.tag }}"
           add: PKGBUILD
 
   build:
-    name: Build Kernel
+    name: Build kernel
     runs-on: ubuntu-latest
     container: archlinux:latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -56,50 +53,41 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel bc cpio gettext git libelf pahole perl python tar xz
 
-      - name: Add builder user
+      - name: Create builder user
         run: |
           useradd -m builder
-          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          chown -R builder:builder "${GITHUB_WORKSPACE}"
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+          chown -R builder:builder $GITHUB_WORKSPACE
 
-      - name: Cleanup pacman cache
-        run: yes | pacman -Scc
-
-      - name: Build PKGBUILD
+      - name: Build with makepkg
         run: |
           sudo -u builder bash -lc "
             mkdir -p ~/build
-            cp -r ${GITHUB_WORKSPACE} ~/build/linux-custom-test
-            cd ~/build/linux-custom-test
+            cp -r $GITHUB_WORKSPACE/* ~/build/
+            cd ~/build
             makepkg -s --noconfirm
-            mkdir -p ${GITHUB_WORKSPACE}/artifacts
-            cp *.pkg.tar.zst ${GITHUB_WORKSPACE}/artifacts/
-          "
-
-      - name: Upload packages
+            mkdir -p $GITHUB_WORKSPACE/artifacts
+            cp *.pkg.tar.zst $GITHUB_WORKSPACE/artifacts/"
+      
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-artifacts
+          name: kernel-packages
           path: artifacts/*.pkg.tar.zst
 
-  bump-version:
-    name: Bump pkgrel if rebuild
+  bump:
+    name: Bump pkgrel if rebuilt
     runs-on: ubuntu-latest
     needs: build
     steps:
       - uses: actions/checkout@v4
 
-      - name: Detect new build
+      - name: Update pkgrel
         id: bump
         run: |
           pv=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
           old=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' | cut -d= -f2 || echo "")
-          if [[ "$pv" != "$old" ]]; then
-            rel=1
-          else
-            curr=$(grep '^pkgrel=' PKGBUILD | cut -d= -f2)
-            rel=$((curr + 1))
-          fi
+          if [[ "$pv" != "$old" ]]; then rel=1; else rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2) + 1 )); fi
           echo "pkgver=$pv" >> $GITHUB_OUTPUT
           echo "pkgrel=$rel" >> $GITHUB_OUTPUT
           echo "$pv-$rel" > .tag
@@ -113,25 +101,26 @@ jobs:
             .tag
 
   release:
-    name: Publish Release
+    name: Publish GitHub release
     runs-on: ubuntu-latest
-    needs: bump-version
+    needs: bump
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download build artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: kernel-artifacts
+          name: kernel-packages
           path: dist
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: linux-custom-test-${{ needs.bump-version.outputs.pkgver }}-${{ needs.bump-version.outputs.pkgrel }}
-          name: Linux Custom Test ${{ needs.bump-version.outputs.pkgver }}-r${{ needs.bump-version.outputs.pkgrel }}
+          tag_name: linux-custom-test-${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}
+          name: Linux Custom Test ${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}
           body: |
-            Release of linux-custom-test v${{ needs.bump-version.outputs.pkgver }}-r${{ needs.bump-version.outputs.pkgrel }}.
+            Release of linux-custom-test kernel v${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}.
+            Built with DKMS module support, optimized configuration.
             Use `pacman -U` to install locally.
           files: dist/*.pkg.tar.zst
         env:
