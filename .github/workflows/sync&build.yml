@@ -1,4 +1,3 @@
-# .github/workflows/build.yml
 name: Build Linux Custom Test Kernel
 
 on:
@@ -14,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Get latest LTS 6.12 tag
         id: tag
         run: |
@@ -22,16 +22,19 @@ jobs:
             | sed 's|.*/v||' \
             | sort -V | tail -1)
           echo "tag=$tag" >> $GITHUB_OUTPUT
+
       - name: Read current pkgver
         id: current
         run: |
           pv=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
           echo "pkgver=$pv" >> $GITHUB_OUTPUT
+
       - name: Update PKGBUILD if new version
         if: ${{ steps.tag.outputs.tag != steps.current.outputs.pkgver }}
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ steps.tag.outputs.tag }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+
       - name: Commit sync
         if: ${{ steps.tag.outputs.tag != steps.current.outputs.pkgver }}
         uses: EndBug/add-and-commit@v9
@@ -45,15 +48,18 @@ jobs:
     container: archlinux:latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel bc cpio gettext git libelf pahole perl python tar xz
+
       - name: Create builder user
         run: |
           useradd -m builder
           echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
           chown -R builder:builder $GITHUB_WORKSPACE
+
       - name: Build with makepkg
         run: |
           sudo -u builder bash -lc "
@@ -62,7 +68,13 @@ jobs:
             cd ~/build
             makepkg -s --noconfirm
             mkdir -p $GITHUB_WORKSPACE/artifacts
-            cp *.pkg.tar.zst $GITHUB_WORKSPACE/artifacts/"
+            # copia entrambi i pacchetti: kernel + headers
+            cp *.pkg.tar.zst $GITHUB_WORKSPACE/artifacts/
+          "
+
+      - name: List built packages
+        run: ls -lh artifacts/
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -77,6 +89,7 @@ jobs:
       pkgrel: ${{ steps.calc.outputs.pkgrel }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Calculate new pkgrel
         id: calc
         run: |
@@ -90,6 +103,7 @@ jobs:
           echo "pkgver=$pv"   >> $GITHUB_OUTPUT
           echo "pkgrel=$rel"  >> $GITHUB_OUTPUT
           echo "$pv-$rel"     > .tag
+
       - name: Commit bump
         uses: EndBug/add-and-commit@v9
         with:
@@ -103,20 +117,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: kernel-packages
           path: dist
+
+      - name: List release assets
+        run: ls -lh dist/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: linux-custom-test-${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}
           name: Linux Custom Test ${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}
           body: |
-            Release of linux-custom-test kernel v${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}.
-            Built with DKMS module support.
-            Install via pacman -U.
+            Release v${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }} of linux-custom-test.
+            Include kernel and headers packages.
           files: dist/*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
