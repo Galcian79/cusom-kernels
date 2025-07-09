@@ -82,8 +82,8 @@ jobs:
           pinentry-mode loopback
           EOF
           echo "$GPG_KEY" | gpg --batch --import
-          # replace ABCDEF12 with your real key ID
-          echo "ABCDEF12:6:" | gpg --import-ownertrust
+          # replace with your real key ID
+          echo "6DA12D86BD20DD8E" | gpg --import-ownertrust
 
       - name: Build with makepkg (--sign)
         run: |
