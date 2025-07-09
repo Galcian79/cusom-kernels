@@ -24,17 +24,19 @@ jobs:
             | sort -V | tail -1)
           echo "tag=$tag" >> $GITHUB_OUTPUT
 
-      - name: Read current version
+      - name: Read current pkgver
         id: current
-        run: echo "pkgver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)" >> $GITHUB_OUTPUT
+        run: |
+          pv=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
+          echo "pkgver=$pv" >> $GITHUB_OUTPUT
 
-      - name: Update PKGBUILD if new version found
+      - name: Update PKGBUILD if new version
         if: ${{ steps.tag.outputs.tag != steps.current.outputs.pkgver }}
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ steps.tag.outputs.tag }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
 
-      - name: Commit update
+      - name: Commit sync
         if: ${{ steps.tag.outputs.tag != steps.current.outputs.pkgver }}
         uses: EndBug/add-and-commit@v9
         with:
@@ -45,6 +47,7 @@ jobs:
     name: Build kernel
     runs-on: ubuntu-latest
     container: archlinux:latest
+    needs: sync
     steps:
       - uses: actions/checkout@v4
 
@@ -68,7 +71,7 @@ jobs:
             makepkg -s --noconfirm
             mkdir -p $GITHUB_WORKSPACE/artifacts
             cp *.pkg.tar.zst $GITHUB_WORKSPACE/artifacts/"
-      
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -79,23 +82,33 @@ jobs:
     name: Bump pkgrel if rebuilt
     runs-on: ubuntu-latest
     needs: build
+
+    outputs:
+      pkgver: ${{ steps.calc.outputs.pkgver }}
+      pkgrel: ${{ steps.calc.outputs.pkgrel }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update pkgrel
-        id: bump
+      - name: Calculate new pkgrel
+        id: calc
         run: |
           pv=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
-          old=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' | cut -d= -f2 || echo "")
-          if [[ "$pv" != "$old" ]]; then rel=1; else rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2) + 1 )); fi
-          echo "pkgver=$pv" >> $GITHUB_OUTPUT
-          echo "pkgrel=$rel" >> $GITHUB_OUTPUT
-          echo "$pv-$rel" > .tag
+          old=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
+          if [[ "$pv" != "$old" ]]; then
+            rel=1
+          else
+            curr=$(grep '^pkgrel=' PKGBUILD | cut -d= -f2)
+            rel=$((curr + 1))
+          fi
+          echo "pkgver=$pv"   >> $GITHUB_OUTPUT
+          echo "pkgrel=$rel"  >> $GITHUB_OUTPUT
+          echo "$pv-$rel"     > .tag
 
       - name: Commit bump
         uses: EndBug/add-and-commit@v9
         with:
-          message: "ci: bump to ${{ steps.bump.outputs.pkgver }}-${{ steps.bump.outputs.pkgrel }}"
+          message: "ci: bump to ${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}"
           add: |
             PKGBUILD
             .tag
@@ -119,9 +132,9 @@ jobs:
           tag_name: linux-custom-test-${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}
           name: Linux Custom Test ${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}
           body: |
-            Release of linux-custom-test kernel v${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}.
-            Built with DKMS module support, optimized configuration.
-            Use `pacman -U` to install locally.
+            Release of linux-custom-test v${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}.
+            Built with DKMS module support, optimized config.
+            Install via pacman -U.
           files: dist/*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
