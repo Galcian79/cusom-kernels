@@ -17,10 +17,8 @@ jobs:
   sync:
     name: Sync PKGBUILD to upstream v6.12.x
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Fetch latest 6.12.x tag
         id: get_tag
@@ -29,8 +27,7 @@ jobs:
             https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
             | grep 'refs/tags/v6\.12\.[0-9]\+$' \
             | sed 's|.*/v||' \
-            | sort -V \
-            | tail -1)
+            | sort -V | tail -1)
           echo "latest=$latest" >> $GITHUB_OUTPUT
 
       - name: Read current pkgver
@@ -43,10 +40,9 @@ jobs:
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/"         PKGBUILD
-          git diff PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/"                    PKGBUILD
 
-      - name: Commit & push version bump
+      - name: Commit & push bump
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
         uses: EndBug/add-and-commit@v9
         with:
@@ -55,19 +51,19 @@ jobs:
 
   build:
     name: Build kernel packages
-    runs-on: ubuntu-latest
     needs: sync
+    runs-on: ubuntu-latest
     container: archlinux:latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install build-deps
+      - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel bc cpio gettext git libelf pahole \
-                                   perl python tar xz
+          pacman -S --noconfirm \
+            base-devel bc cpio gettext git libelf pahole \
+            perl python tar xz pacman-contrib
 
       - name: Create builder user
         run: |
@@ -78,13 +74,20 @@ jobs:
       - name: Build with makepkg
         run: |
           sudo -u builder bash -lc "
-            cd \$HOME
-            git clone $GITHUB_SERVER_URL/$GITHUB_REPOSITORY src
-            cd src
+            mkdir -p ~/build
+            cp -r $GITHUB_WORKSPACE/* ~/build/
+            cd ~/build
+            # rigenera gli sha256sums in PKGBUILD
+            updpkgsums
+            # ora compila
             makepkg -s --noconfirm
+            # raccogli artefatti
             mkdir -p $GITHUB_WORKSPACE/artifacts
             cp *.pkg.tar.zst $GITHUB_WORKSPACE/artifacts/
           "
+
+      - name: List built packages
+        run: ls -lh artifacts/
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -94,22 +97,21 @@ jobs:
 
   bump:
     name: Bump pkgrel if rebuild
-    runs-on: ubuntu-latest
     needs: build
-
+    runs-on: ubuntu-latest
     outputs:
       pkgver: ${{ steps.calc.outputs.pkgver }}
       pkgrel: ${{ steps.calc.outputs.pkgrel }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Compute new pkgrel
         id: calc
         run: |
           ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
-          prev=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
+          prev=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' \
+                   | cut -d= -f2 2>/dev/null || echo "")
           if [[ "$ver" != "$prev" ]]; then
             rel=1
           else
@@ -129,12 +131,11 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    runs-on: ubuntu-latest
     needs: bump
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -142,10 +143,10 @@ jobs:
           name: kernel-packages
           path: release
 
-      - name: List release content
+      - name: List release artifacts
         run: ls -lh release/
 
-      - name: Create & upload release
+      - name: Create & upload GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.PKGBASE }}-${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}
@@ -153,7 +154,7 @@ jobs:
           body: |
             Custom LTS kernel built with modprobed.db.
             Version: ${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}
-            Install via pacman -U *.pkg.tar.zst
+            Install with `pacman -U *.pkg.tar.zst`
           files: release/*.pkg.tar.zst
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
