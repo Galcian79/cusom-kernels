@@ -1,0 +1,124 @@
+# .github/workflows/build-and-release.yml
+
+name: Sync, Build & GitHub Release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+permissions:
+  contents: write
+
+env:
+  PKGBASE: linux-custom-test
+
+jobs:
+
+  sync:
+    name: Sync PKGBUILD → Upstream Linux v6.12.x
+    runs-on: ubuntu-latest
+    outputs:
+      latest_tag: ${{ steps.get_tag.outputs.latest }}
+      bumped:      ${{ steps.bumped.outputs.bumped }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch latest v6.12.x tag
+        id: get_tag
+        run: |
+          latest=$(git ls-remote --tags --refs \
+            https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
+            | grep -E 'refs/tags/v6\.12\.[0-9]+$' \
+            | sed 's|.*/v||' | sort -V | tail -1)
+          echo "latest=$latest" >> $GITHUB_OUTPUT
+
+      - name: Read current pkgver
+        id: get_pkgver
+        run: |
+          current=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
+          echo "current=$current" >> $GITHUB_OUTPUT
+
+      - name: Bump pkgver/_tag & reset pkgrel
+        id: bumped
+        run: |
+          if [ "${{ steps.get_tag.outputs.latest }}" != "${{ steps.get_pkgver.outputs.current }}" ]; then
+            sed -i "s|^pkgver=.*|pkgver=${{ steps.get_tag.outputs.latest }}|" PKGBUILD
+            sed -i "s|^pkgrel=.*|pkgrel=1|" PKGBUILD
+            sed -i "s|^_tag=.*|_tag=${{ steps.get_tag.outputs.latest }}|" PKGBUILD
+            echo "bumped=true" >> $GITHUB_OUTPUT
+          else
+            echo "bumped=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit sync changes
+        if: steps.bumped.outputs.bumped == 'true'
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: "ci: sync to Linux v${{ steps.get_tag.outputs.latest }}"
+          add: PKGBUILD
+
+  build:
+    name: Build kernel packages
+    needs: sync
+    if: needs.sync.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    outputs:
+      pkgfiles: ${{ steps.collect.outputs.files }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel bc cpio git libelf pahole \
+            perl python tar xz pacman-contrib
+
+      - name: Build package
+        run: |
+          updpkgsums
+          makepkg -s --noconfirm
+
+      - name: Collect built artifacts
+        id: collect
+        run: |
+          files=$(ls *.pkg.tar.zst | tr '\n' ' ')
+          echo "files=$files" >> $GITHUB_OUTPUT
+
+  release:
+    name: Create GitHub Release & upload assets
+    needs: build
+    if: needs.sync.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        with:
+          tag_name: v${{ needs.sync.outputs.latest_tag }}
+          release_name: "Linux-custom v${{ needs.sync.outputs.latest_tag }}"
+          body: |
+            Automated release of Linux-custom v${{ needs.sync.outputs.latest_tag }}  
+            Includes packages: ${{ needs.build.outputs.pkgfiles }}
+          draft: false
+          prerelease: false
+
+      - name: Upload package assets
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ github.workspace }}/${{ item }}
+          asset_name: ${{ item }}
+          asset_content_type: application/gzip
+        # repeat upload step for each file
+        with:
+          asset_path: |
+            ${{ steps.build.outputs.pkgfiles }}
+          asset_name: |
+            ${{ steps.build.outputs.pkgfiles }}
