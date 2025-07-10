@@ -1,4 +1,4 @@
-# .github/workflows/pacman.yml
+# .github/workflows/build-pacman.yml
 
 name: Build & Publish Pacman Repo
 
@@ -86,7 +86,7 @@ jobs:
           cp -r $GITHUB_WORKSPACE/* /home/builder/build/
           chown -R builder:builder /home/builder/build
 
-      - name: Build packages as builder
+      - name: Build packages
         run: |
           sudo -u builder bash -c '
             cd /home/builder/build
@@ -105,8 +105,8 @@ jobs:
           else
             rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2) + 1 ))
           fi
-          echo "pkgver=$ver"   >> $GITHUB_OUTPUT
-          echo "pkgrel=$rel"   >> $GITHUB_OUTPUT
+          echo "pkgver=$ver" >> $GITHUB_OUTPUT
+          echo "pkgrel=$rel" >> $GITHUB_OUTPUT
 
       - name: Collect artifacts
         run: |
@@ -136,8 +136,8 @@ jobs:
 
       - name: Configure Git user
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Ensure gh-pages branch exists
         run: |
@@ -146,7 +146,7 @@ jobs:
           else
             git checkout --orphan $REPO_BRANCH
             git rm -rf .
-            git commit --allow-empty -m "Init $REPO_BRANCH branch"
+            git commit --allow-empty -m "Init $REPO_BRANCH"
             git push origin $REPO_BRANCH
             git checkout $REPO_BRANCH
           fi
