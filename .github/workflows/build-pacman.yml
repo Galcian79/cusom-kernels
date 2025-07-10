@@ -29,7 +29,8 @@ jobs:
       - name: Fetch latest v6.12.x tag
         id: get_tag
         run: |
-          latest=$(git ls-remote --tags --refs https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
+          latest=$(git ls-remote --tags --refs \
+            https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
             | grep -E 'refs/tags/v6\.12\.[0-9]+$' \
             | sed 's|.*/v||' | sort -V | tail -1)
           echo "latest=$latest" >> $GITHUB_OUTPUT
@@ -44,8 +45,8 @@ jobs:
         id: bumped
         run: |
           if [ "${{ steps.get_tag.outputs.latest }}" != "${{ steps.get_pkgver.outputs.current }}" ]; then
-            sed -i "s/^pkgver=.*/pkgver=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
-            sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+            sed -i "s|^pkgver=.*|pkgver=${{ steps.get_tag.outputs.latest }}|" PKGBUILD
+            sed -i "s|^pkgrel=.*|pkgrel=1|" PKGBUILD
             sed -i "s|^_tag=.*|_tag=${{ steps.get_tag.outputs.latest }}|" PKGBUILD
             echo "bumped=true" >> $GITHUB_OUTPUT
           else
@@ -60,53 +61,68 @@ jobs:
           add: PKGBUILD
 
   build:
-    name: Build kernel package
+    name: Build kernel packages (manual)
     needs: sync
     runs-on: ubuntu-latest
+    container: archlinux:latest
+    outputs:
+      pkgver: ${{ steps.calc.outputs.pkgver }}
+      pkgrel: ${{ steps.calc.outputs.pkgrel }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build & validate
-        uses: heyhusen/archlinux-package-action@v2
-        with:
-          path: .
-          flags: '-s --noconfirm'
-          updpkgsums: true
-          srcinfo: true
-          namcap: false
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm \
+            base-devel bc cpio gettext git libelf pahole \
+            perl python tar xz pacman-contrib
 
-      - name: Debug workspace
-        run: ls -R .
+      - name: Update checksums & build
+        run: |
+          cd $GITHUB_WORKSPACE
+          updpkgsums
+          makepkg -s --noconfirm
 
-      - name: Upload artifacts
+      - name: Compute pkgver & pkgrel
+        id: calc
+        run: |
+          ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
+          rel=$(grep '^pkgrel=' PKGBUILD | cut -d= -f2)
+          echo "pkgver=$ver" >> $GITHUB_OUTPUT
+          echo "pkgrel=$rel" >> $GITHUB_OUTPUT
+
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
           name: pkgs
-          path: '**/*.pkg.tar.zst'
+          path: '*.pkg.tar.zst'
 
   publish:
     name: Publish Pacman repo on gh-pages
     needs: build
     runs-on: ubuntu-latest
+    container: archlinux:latest
 
     steps:
-      - name: Disable safe.directory
-        run: git config --global --add safe.directory '*'
-
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Git user
+      - name: Install repo tools
+        run: |
+          pacman -Syu --noconfirm git pacman-contrib
+
+      - name: Configure Git user
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Ensure gh-pages branch
+      - name: Ensure gh-pages branch exists
         run: |
           if git ls-remote --exit-code origin $REPO_BRANCH; then
             git checkout $REPO_BRANCH
@@ -118,26 +134,23 @@ jobs:
             git checkout $REPO_BRANCH
           fi
 
-      - name: Download pkgs
+      - name: Download built packages
         uses: actions/download-artifact@v4
         with:
           name: pkgs
           path: repo
 
-      - name: Organize layout
+      - name: Organize repo layout
         run: |
           mkdir -p repo/x86_64
           mv repo/*.pkg.tar.zst repo/x86_64/
 
-      - name: Update Pacman DB in Docker
+      - name: Update Pacman DB
         run: |
-          docker run --rm \
-            -v "${{ github.workspace }}/repo":/repo \
-            -w /repo \
-            archlinux:latest \
-            sh -c "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm pacman-contrib && repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst"
+          cd repo
+          repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst
 
-      - name: Commit & push
+      - name: Commit & push to gh-pages
         run: |
           git add repo/
           git commit -m "repo: add ${PKGBASE} v${{ needs.sync.outputs.latest_tag }}-r${{ needs.build.outputs.pkgrel }}"
