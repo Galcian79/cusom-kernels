@@ -1,6 +1,6 @@
-# .github/workflows/build-and-release.yml
+# .github/workflows/build.yml
 
-name: Sync, Build & GitHub Release
+name: Build & Release linux-custom-test Kernel
 
 on:
   workflow_dispatch:
@@ -16,23 +16,24 @@ env:
 jobs:
 
   sync:
-    name: Sync PKGBUILD → Upstream Linux v6.12.x
+    name: Sync PKGBUILD to upstream v6.12.x
     runs-on: ubuntu-latest
     outputs:
-      latest_tag: ${{ steps.get_tag.outputs.latest }}
-      bumped:      ${{ steps.bumped.outputs.bumped }}
+      latest: ${{ steps.get_tag.outputs.latest }}
+      bumped: ${{ steps.bumped.outputs.bumped }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch latest v6.12.x tag
+      - name: Fetch latest 6.12.x tag
         id: get_tag
         run: |
           latest=$(git ls-remote --tags --refs \
             https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
-            | grep -E 'refs/tags/v6\.12\.[0-9]+$' \
-            | sed 's|.*/v||' | sort -V | tail -1)
+            | grep 'refs/tags/v6\.12\.[0-9]\+$' \
+            | sed 's|.*/v||' \
+            | sort -V | tail -1)
           echo "latest=$latest" >> $GITHUB_OUTPUT
 
       - name: Read current pkgver
@@ -41,17 +42,18 @@ jobs:
           current=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
           echo "current=$current" >> $GITHUB_OUTPUT
 
-      - name: Bump pkgver/_tag & reset pkgrel
+      - name: Bump pkgver, _tag & reset pkgrel
         id: bumped
+        if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
         run: |
-          if [ "${{ steps.get_tag.outputs.latest }}" != "${{ steps.get_pkgver.outputs.current }}" ]; then
-            sed -i "s|^pkgver=.*|pkgver=${{ steps.get_tag.outputs.latest }}|" PKGBUILD
-            sed -i "s|^pkgrel=.*|pkgrel=1|" PKGBUILD
-            sed -i "s|^_tag=.*|_tag=${{ steps.get_tag.outputs.latest }}|" PKGBUILD
-            echo "bumped=true" >> $GITHUB_OUTPUT
-          else
-            echo "bumped=false" >> $GITHUB_OUTPUT
-          fi
+          sed -i "s|^pkgver=.*|pkgver=${{ steps.get_tag.outputs.latest }}|" PKGBUILD
+          sed -i "s|^pkgrel=.*|pkgrel=1|"                          PKGBUILD
+          sed -i "s|^_tag=.*|_tag=${{ steps.get_tag.outputs.latest }}|" PKGBUILD
+          echo "bumped=true" >> $GITHUB_OUTPUT
+        # if no bump needed, explicitly say so
+      - name: No bump needed
+        if: ${{ steps.get_tag.outputs.latest == steps.get_pkgver.outputs.current }}
+        run: echo "bumped=false" >> $GITHUB_OUTPUT
 
       - name: Commit sync changes
         if: steps.bumped.outputs.bumped == 'true'
@@ -63,11 +65,8 @@ jobs:
   build:
     name: Build kernel packages
     needs: sync
-    if: needs.sync.outputs.bumped == 'true'
     runs-on: ubuntu-latest
     container: archlinux:latest
-    outputs:
-      pkgfiles: ${{ steps.collect.outputs.files }}
 
     steps:
       - name: Checkout
@@ -76,49 +75,99 @@ jobs:
       - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel bc cpio git libelf pahole \
+          pacman -S --noconfirm \
+            base-devel bc cpio gettext git libelf pahole \
             perl python tar xz pacman-contrib
 
-      - name: Build package
+      - name: Create builder user
         run: |
-          updpkgsums
-          makepkg -s --noconfirm
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+          chown -R builder:builder $GITHUB_WORKSPACE
 
-      - name: Collect built artifacts
-        id: collect
+      - name: Build with makepkg
         run: |
-          files=$(ls *.pkg.tar.zst | tr '\n' ' ')
-          echo "files=$files" >> $GITHUB_OUTPUT
+          sudo -u builder bash -lc "
+            mkdir -p ~/build
+            cp -r \$GITHUB_WORKSPACE/* ~/build/
+            cd ~/build
+            updpkgsums
+            makepkg -s --noconfirm
+            mkdir -p \$GITHUB_WORKSPACE/artifacts
+            cp *.pkg.tar.zst \$GITHUB_WORKSPACE/artifacts/
+          "
+
+      - name: List built packages
+        run: ls -lh artifacts/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-packages
+          path: artifacts/*.pkg.tar.zst
+
+  bump:
+    name: Bump pkgrel if rebuild
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      pkgver: ${{ steps.calc.outputs.pkgver }}
+      pkgrel: ${{ steps.calc.outputs.pkgrel }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute new pkgver/pkgrel
+        id: calc
+        run: |
+          ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
+          prev=$(git show HEAD~1:PKGBUILD \
+                   | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
+          if [[ "$ver" != "$prev" ]]; then
+            rel=1
+          else
+            rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2) + 1 ))
+          fi
+          echo "pkgver=$ver" >> $GITHUB_OUTPUT
+          echo "pkgrel=$rel" >> $GITHUB_OUTPUT
+          echo "$ver-$rel" > .tag
+
+      - name: Commit bump
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: "ci: bump to ${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}"
+          add: |
+            PKGBUILD
+            .tag
 
   release:
-    name: Create GitHub Release & upload assets
-    needs: build
-    if: needs.sync.outputs.bumped == 'true'
+    name: Publish GitHub Release
+    needs: bump
     runs-on: ubuntu-latest
 
     steps:
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        with:
-          tag_name: v${{ needs.sync.outputs.latest_tag }}
-          release_name: "Linux-custom v${{ needs.sync.outputs.latest_tag }}"
-          body: |
-            Automated release of Linux-custom v${{ needs.sync.outputs.latest_tag }}  
-            Includes packages: ${{ needs.build.outputs.pkgfiles }}
-          draft: false
-          prerelease: false
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Upload package assets
-        uses: actions/upload-release-asset@v1
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ github.workspace }}/${{ item }}
-          asset_name: ${{ item }}
-          asset_content_type: application/gzip
-        # repeat upload step for each file
+          name: kernel-packages
+          path: dist
+
+      - name: List release assets
+        run: ls -lh dist/
+
+      - name: Create & upload GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          asset_path: |
-            ${{ steps.build.outputs.pkgfiles }}
-          asset_name: |
-            ${{ steps.build.outputs.pkgfiles }}
+          tag_name: v${{ env.PKGBASE }}-${{ needs.bump.outputs.pkgver }}-${{ needs.bump.outputs.pkgrel }}
+          name: ${{ env.PKGBASE }} ${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}
+          body: |
+            Custom LTS kernel built with modprobed.db.
+            Version: ${{ needs.bump.outputs.pkgver }}-r${{ needs.bump.outputs.pkgrel }}
+            Install via pacman -U *.pkg.tar.zst
+          files: dist/*.pkg.tar.zst
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
