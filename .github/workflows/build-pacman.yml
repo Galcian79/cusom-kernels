@@ -33,8 +33,7 @@ jobs:
             https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
             | grep -E 'refs/tags/v6\.12\.[0-9]+$' \
             | sed 's|.*/v||' \
-            | sort -V \
-            | tail -1)
+            | sort -V | tail -1)
           echo "latest=$latest" >> $GITHUB_OUTPUT
 
       - name: Read current pkgver
@@ -47,7 +46,7 @@ jobs:
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/"                          PKGBUILD
 
       - name: Commit version bump
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
@@ -100,11 +99,7 @@ jobs:
           ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
           prev=$(git show HEAD~1:PKGBUILD 2>/dev/null \
                    | grep '^pkgver=' | cut -d= -f2 || echo "")
-          if [[ "$ver" != "$prev" ]]; then
-            rel=1
-          else
-            rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2) + 1 ))
-          fi
+          if [[ "$ver" != "$prev" ]]; then rel=1; else rel=$(( $(grep '^pkgrel=' PKGBUILD|cut -d= -f2)+1 )); fi
           echo "pkgver=$ver" >> $GITHUB_OUTPUT
           echo "pkgrel=$rel" >> $GITHUB_OUTPUT
 
@@ -124,15 +119,21 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     container: archlinux:latest
-    steps:
-      - name: Install repo tools
-        run: |
-          pacman -Syu --noconfirm pacman-contrib git
 
+    steps:
       - name: Checkout default branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
+
+      - name: Mark workspace safe for Git
+        run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+
+      - name: Install repo tools
+        run: |
+          pacman -Syu --noconfirm pacman-contrib git
 
       - name: Configure Git user
         run: |
@@ -141,14 +142,14 @@ jobs:
 
       - name: Ensure gh-pages branch exists
         run: |
-          if git ls-remote --exit-code origin $REPO_BRANCH; then
-            git checkout $REPO_BRANCH
+          if git ls-remote --exit-code origin ${REPO_BRANCH}; then
+            git checkout ${REPO_BRANCH}
           else
-            git checkout --orphan $REPO_BRANCH
+            git checkout --orphan ${REPO_BRANCH}
             git rm -rf .
-            git commit --allow-empty -m "Init $REPO_BRANCH"
-            git push origin $REPO_BRANCH
-            git checkout $REPO_BRANCH
+            git commit --allow-empty -m "Init ${REPO_BRANCH}"
+            git push origin ${REPO_BRANCH}
+            git checkout ${REPO_BRANCH}
           fi
 
       - name: Download built packages
@@ -171,4 +172,4 @@ jobs:
         run: |
           git add repo/
           git commit -m "repo: add ${PKGBASE} v${{ needs.build.outputs.pkgver }}-r${{ needs.build.outputs.pkgrel }}"
-          git push origin $REPO_BRANCH
+          git push origin ${REPO_BRANCH}
