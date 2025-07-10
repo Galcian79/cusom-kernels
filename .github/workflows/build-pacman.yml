@@ -1,4 +1,4 @@
-# .github/workflows/build-pacman.yml
+# .github/workflows/build-pacman-repo.yml
 
 name: Build & Publish Pacman Repo
 
@@ -17,24 +17,21 @@ env:
 jobs:
 
   sync:
-    name: Sync PKGBUILD to upstream v6.12.x
+    name: Sync PKGBUILD → Linux v6.12.x
     runs-on: ubuntu-latest
     outputs:
       latest: ${{ steps.get_tag.outputs.latest }}
       current: ${{ steps.get_pkgver.outputs.current }}
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Fetch latest 6.12.x tag
+      - name: Fetch latest v6.12.x tag
         id: get_tag
         run: |
           latest=$(git ls-remote --tags --refs \
             https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
             | grep -E 'refs/tags/v6\.12\.[0-9]+$' \
-            | sed 's|.*/v||' \
-            | sort -V \
-            | tail -1)
+            | sed 's|.*/v||' | sort -V | tail -1)
           echo "latest=$latest" >> $GITHUB_OUTPUT
 
       - name: Read current pkgver
@@ -65,30 +62,26 @@ jobs:
       pkgver: ${{ steps.calc.outputs.pkgver }}
       pkgrel: ${{ steps.calc.outputs.pkgrel }}
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install build deps
         run: |
-          pacman-key --init
-          pacman-key --populate archlinux
           pacman -Syu --noconfirm
-          pacman -S --noconfirm \
-            base-devel bc cpio gettext git libelf pahole \
-            perl python tar xz pacman-contrib
+          pacman -S --noconfirm base-devel bc cpio gettext git \
+            libelf pahole perl python tar xz pacman-contrib
 
-      - name: Create builder user
+      - name: Create non-root builder
         run: |
           useradd -m builder
           echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
-      - name: Copy sources into builder home
+      - name: Stage sources for builder
         run: |
           mkdir -p /home/builder/build
           cp -r $GITHUB_WORKSPACE/* /home/builder/build/
           chown -R builder:builder /home/builder/build
 
-      - name: Build packages
+      - name: Compile & package
         run: |
           sudo -u builder bash -c '
             cd /home/builder/build
@@ -101,7 +94,7 @@ jobs:
         run: |
           ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
           prev=$(git show HEAD~1:PKGBUILD 2>/dev/null \
-                   | grep '^pkgver=' | cut -d= -f2 || echo "")
+                    | grep '^pkgver=' | cut -d= -f2 || echo "")
           if [[ "$ver" != "$prev" ]]; then
             rel=1
           else
@@ -115,19 +108,18 @@ jobs:
           mkdir -p artifacts
           cp /home/builder/build/*.pkg.tar.zst artifacts/
 
-      - name: Upload packages
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: pkgs
           path: artifacts/*.pkg.tar.zst
 
   publish:
-    name: Publish to gh-pages Pacman repo
+    name: Publish Pacman repo on gh-pages
     needs: build
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout default branch
+
+      - name: Checkout main branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -135,6 +127,11 @@ jobs:
 
       - name: Mark workspace safe for Git
         run: git config --global --add safe.directory $GITHUB_WORKSPACE
+
+      - name: Configure Git user
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Ensure gh-pages branch exists
         run: |
@@ -159,10 +156,10 @@ jobs:
           mkdir -p repo/x86_64
           mv repo/*.pkg.tar.zst repo/x86_64/
 
-      - name: Update Pacman database (in Docker)
+      - name: Update Pacman DB in Docker
         run: |
           docker run --rm \
-            -v $GITHUB_WORKSPACE/repo:/repo \
+            -v "$PWD/repo":/repo \
             -w /repo \
             archlinux:latest \
             sh -c '
