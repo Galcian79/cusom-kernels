@@ -15,14 +15,12 @@ env:
   REPO_BRANCH: gh-pages
 
 jobs:
-
   sync:
     name: Sync PKGBUILD → Upstream Linux v6.12.x
     runs-on: ubuntu-latest
     outputs:
       latest_tag: ${{ steps.get_tag.outputs.latest }}
       bumped:      ${{ steps.bumped.outputs.bumped }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -134,10 +132,10 @@ jobs:
       - name: Update Pacman DB in Docker
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}/repo":/repo \
+            -v ${{ github.workspace }}/repo:/repo \
             -w /repo \
             archlinux:latest \
-            /bin/sh -ec "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm pacman-contrib && repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst"
+            sh -c "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm pacman-contrib && repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst"
 
       - name: Commit & push to gh-pages
         run: |
