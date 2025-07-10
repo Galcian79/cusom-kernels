@@ -21,12 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       latest_tag: ${{ steps.get_tag.outputs.latest }}
-      bumped: ${{ steps.bumped.outputs.bumped }}
+      bumped:      ${{ steps.bumped.outputs.bumped }}
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Fetch latest 6.12.x tag
+      - name: Fetch latest v6.12.x tag
         id: get_tag
         run: |
           latest=$(git ls-remote --tags --refs \
@@ -46,8 +45,8 @@ jobs:
         run: |
           if [[ "${{ steps.get_tag.outputs.latest }}" != "${{ steps.get_pkgver.outputs.current }}" ]]; then
             sed -i "s/^pkgver=.*/pkgver=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
-            sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-            sed -i "s/^_tag=.*/_tag=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
+            sed -i "s/^pkgrel=.*/pkgrel=1/"                          PKGBUILD
+            sed -i "s/^_tag=.*/_tag=${{ steps.get_tag.outputs.latest }}/"  PKGBUILD
             echo "bumped=true" >> $GITHUB_OUTPUT
           else
             echo "bumped=false" >> $GITHUB_OUTPUT
@@ -66,8 +65,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Build & validate PKGBUILD
         uses: heyhusen/archlinux-package-action@v2
@@ -78,11 +76,14 @@ jobs:
           srcinfo: true
           namcap: false
 
-      - name: Upload package artifact
+      - name: Debug: list workspace
+        run: ls -R .
+
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
           name: pkgs
-          path: '*.pkg.tar.zst'
+          path: '**/*.pkg.tar.zst'
 
   publish:
     name: Publish Pacman repo on gh-pages
@@ -93,8 +94,7 @@ jobs:
       - name: Disable safe.directory checks
         run: git config --global --add safe.directory '*'
 
-      - name: Checkout default branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
@@ -116,8 +116,7 @@ jobs:
             git checkout $REPO_BRANCH
           fi
 
-      - name: Download built packages
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: pkgs
           path: repo
