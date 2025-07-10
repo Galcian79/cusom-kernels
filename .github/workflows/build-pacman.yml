@@ -1,4 +1,4 @@
-# .github/workflows/build-pacman-repo.yml
+# .github/workflows/build-pacman.yml
 
 name: Build & Publish Pacman Repo
 
@@ -47,7 +47,7 @@ jobs:
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/"                          PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
 
       - name: Commit version bump
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
@@ -70,6 +70,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          pacman-key --init
+          pacman-key --populate archlinux
           pacman -Syu --noconfirm
           pacman -S --noconfirm \
             base-devel bc cpio gettext git libelf pahole \
@@ -100,7 +102,11 @@ jobs:
           ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
           prev=$(git show HEAD~1:PKGBUILD 2>/dev/null \
                    | grep '^pkgver=' | cut -d= -f2 || echo "")
-          if [[ "$ver" != "$prev" ]]; then rel=1; else rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2)+1 )); fi
+          if [[ "$ver" != "$prev" ]]; then
+            rel=1
+          else
+            rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2) + 1 ))
+          fi
           echo "pkgver=$ver" >> $GITHUB_OUTPUT
           echo "pkgrel=$rel" >> $GITHUB_OUTPUT
 
@@ -119,13 +125,8 @@ jobs:
     name: Publish to gh-pages Pacman repo
     needs: build
     runs-on: ubuntu-latest
-    container: archlinux:latest
 
     steps:
-      - name: Install git & repo tools
-        run: |
-          pacman -Syu --noconfirm git pacman-contrib
-
       - name: Checkout default branch
         uses: actions/checkout@v4
         with:
@@ -134,11 +135,6 @@ jobs:
 
       - name: Mark workspace safe for Git
         run: git config --global --add safe.directory $GITHUB_WORKSPACE
-
-      - name: Configure Git user
-        run: |
-          git config --global user.name  "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Ensure gh-pages branch exists
         run: |
@@ -163,10 +159,18 @@ jobs:
           mkdir -p repo/x86_64
           mv repo/*.pkg.tar.zst repo/x86_64/
 
-      - name: Update Pacman database
+      - name: Update Pacman database (in Docker)
         run: |
-          cd repo
-          repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst
+          docker run --rm \
+            -v $GITHUB_WORKSPACE/repo:/repo \
+            -w /repo \
+            archlinux:latest \
+            sh -c '
+              pacman-key --init &&
+              pacman-key --populate archlinux &&
+              pacman -Sy --noconfirm pacman-contrib &&
+              repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst
+            '
 
       - name: Commit & push gh-pages
         run: |
