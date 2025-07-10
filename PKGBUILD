@@ -7,7 +7,7 @@
 
 pkgbase=linux-custom-test      # Build kernel with a different name
 _tag=v6.12.36
-pkgver=6.12.36
+pkgver=6.12.37
 pkgrel=1
 pkgdesc="Linux custom LTS"
 arch=(x86_64)
