@@ -1,4 +1,4 @@
-# .github/workflows/build-pacman.yml
+# .github/workflows/pacman.yml
 
 name: Build & Publish Pacman Repo
 
@@ -20,7 +20,8 @@ jobs:
     name: Sync PKGBUILD to upstream v6.12.x
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.get_tag.outputs.latest }}
+      latest: ${{ steps.get_tag.outputs.latest }}
+      current: ${{ steps.get_pkgver.outputs.current }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -63,7 +64,6 @@ jobs:
     outputs:
       pkgver: ${{ steps.calc.outputs.pkgver }}
       pkgrel: ${{ steps.calc.outputs.pkgrel }}
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -80,13 +80,13 @@ jobs:
           useradd -m builder
           echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
-      - name: Copy sources to builder home
+      - name: Copy sources into builder home
         run: |
           mkdir -p /home/builder/build
           cp -r $GITHUB_WORKSPACE/* /home/builder/build/
           chown -R builder:builder /home/builder/build
 
-      - name: Build packages
+      - name: Build packages as builder
         run: |
           sudo -u builder bash -c '
             cd /home/builder/build
@@ -98,7 +98,8 @@ jobs:
         id: calc
         run: |
           ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
-          prev=$(git show HEAD~1:PKGBUILD | grep '^pkgver=' | cut -d= -f2 2>/dev/null || echo "")
+          prev=$(git show HEAD~1:PKGBUILD 2>/dev/null \
+                   | grep '^pkgver=' | cut -d= -f2 || echo "")
           if [[ "$ver" != "$prev" ]]; then
             rel=1
           else
@@ -122,8 +123,12 @@ jobs:
     name: Publish to gh-pages Pacman repo
     needs: build
     runs-on: ubuntu-latest
-
+    container: archlinux:latest
     steps:
+      - name: Install repo tools
+        run: |
+          pacman -Syu --noconfirm pacman-contrib git
+
       - name: Checkout default branch
         uses: actions/checkout@v4
         with:
@@ -136,14 +141,14 @@ jobs:
 
       - name: Ensure gh-pages branch exists
         run: |
-          if git ls-remote --exit-code origin ${REPO_BRANCH}; then
-            git checkout ${REPO_BRANCH}
+          if git ls-remote --exit-code origin $REPO_BRANCH; then
+            git checkout $REPO_BRANCH
           else
-            git checkout --orphan ${REPO_BRANCH}
+            git checkout --orphan $REPO_BRANCH
             git rm -rf .
-            git commit --allow-empty -m "Init ${REPO_BRANCH}"
-            git push origin ${REPO_BRANCH}
-            git checkout ${REPO_BRANCH}
+            git commit --allow-empty -m "Init $REPO_BRANCH branch"
+            git push origin $REPO_BRANCH
+            git checkout $REPO_BRANCH
           fi
 
       - name: Download built packages
@@ -166,4 +171,4 @@ jobs:
         run: |
           git add repo/
           git commit -m "repo: add ${PKGBASE} v${{ needs.build.outputs.pkgver }}-r${{ needs.build.outputs.pkgrel }}"
-          git push origin ${REPO_BRANCH}
+          git push origin $REPO_BRANCH
