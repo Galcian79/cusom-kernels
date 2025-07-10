@@ -1,4 +1,4 @@
-# .github/workflows/build-pacman-repo.yml
+# .github/workflows/build-pacman.yml
 
 name: Build & Publish Pacman Repo
 
@@ -23,7 +23,8 @@ jobs:
       latest: ${{ steps.get_tag.outputs.latest }}
       current: ${{ steps.get_pkgver.outputs.current }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Fetch latest v6.12.x tag
         id: get_tag
@@ -44,7 +45,7 @@ jobs:
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/"                          PKGBUILD
 
       - name: Commit version bump
         if: ${{ steps.get_tag.outputs.latest != steps.get_pkgver.outputs.current }}
@@ -62,9 +63,10 @@ jobs:
       pkgver: ${{ steps.calc.outputs.pkgver }}
       pkgrel: ${{ steps.calc.outputs.pkgrel }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Install build deps
+      - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel bc cpio gettext git \
@@ -75,7 +77,7 @@ jobs:
           useradd -m builder
           echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
-      - name: Stage sources for builder
+      - name: Prepare build workspace
         run: |
           mkdir -p /home/builder/build
           cp -r $GITHUB_WORKSPACE/* /home/builder/build/
@@ -94,12 +96,8 @@ jobs:
         run: |
           ver=$(grep '^pkgver=' PKGBUILD | cut -d= -f2)
           prev=$(git show HEAD~1:PKGBUILD 2>/dev/null \
-                    | grep '^pkgver=' | cut -d= -f2 || echo "")
-          if [[ "$ver" != "$prev" ]]; then
-            rel=1
-          else
-            rel=$(( $(grep '^pkgrel=' PKGBUILD | cut -d= -f2) + 1 ))
-          fi
+                   | grep '^pkgver=' | cut -d= -f2 || echo "")
+          if [[ "$ver" != "$prev" ]]; then rel=1; else rel=$(( $(grep '^pkgrel=' PKGBUILD|cut -d= -f2)+1 )); fi
           echo "pkgver=$ver" >> $GITHUB_OUTPUT
           echo "pkgrel=$rel" >> $GITHUB_OUTPUT
 
@@ -108,7 +106,8 @@ jobs:
           mkdir -p artifacts
           cp /home/builder/build/*.pkg.tar.zst artifacts/
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
         with:
           name: pkgs
           path: artifacts/*.pkg.tar.zst
@@ -117,16 +116,16 @@ jobs:
     name: Publish Pacman repo on gh-pages
     needs: build
     runs-on: ubuntu-latest
-    steps:
 
-      - name: Checkout main branch
+    steps:
+      - name: Disable safe.directory checks
+        run: git config --global --add safe.directory '*'
+
+      - name: Checkout default branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
-
-      - name: Mark workspace safe for Git
-        run: git config --global --add safe.directory $GITHUB_WORKSPACE
 
       - name: Configure Git user
         run: |
