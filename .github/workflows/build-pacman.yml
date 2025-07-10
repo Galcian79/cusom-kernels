@@ -45,7 +45,7 @@ jobs:
         run: |
           if [ "${{ steps.get_tag.outputs.latest }}" != "${{ steps.get_pkgver.outputs.current }}" ]; then
             sed -i "s/^pkgver=.*/pkgver=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
-            sed -i "s/^pkgrel=.*/pkgrel=1/"                          PKGBUILD
+            sed -i "s/^pkgrel=.*/pkgrel=1/"                              PKGBUILD
             sed -i "s/^_tag=.*/_tag=${{ steps.get_tag.outputs.latest }}/" PKGBUILD
             echo "bumped=true" >> $GITHUB_OUTPUT
           else
@@ -132,10 +132,13 @@ jobs:
       - name: Update Pacman DB in Docker
         run: |
           docker run --rm \
-            -v ${{ github.workspace }}/repo:/repo \
+            -v "${{ github.workspace }}/repo":/repo \
             -w /repo \
             archlinux:latest \
-            sh -c "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm pacman-contrib && repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst"
+            sh -c 'pacman-key --init && \
+                   pacman-key --populate archlinux && \
+                   pacman -Sy --noconfirm pacman-contrib && \
+                   repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst'
 
       - name: Commit & push to gh-pages
         run: |
