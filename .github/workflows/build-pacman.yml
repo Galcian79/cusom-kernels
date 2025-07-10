@@ -33,9 +33,7 @@ jobs:
           latest=$(git ls-remote --tags --refs \
             https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git \
             | grep -E 'refs/tags/v6\.12\.[0-9]+$' \
-            | sed 's|.*/v||' \
-            | sort -V \
-            | tail -1)
+            | sed 's|.*/v||' | sort -V | tail -1)
           echo "latest=$latest" >> $GITHUB_OUTPUT
 
       - name: Read current pkgver
@@ -139,10 +137,7 @@ jobs:
             -v "${{ github.workspace }}/repo":/repo \
             -w /repo \
             archlinux:latest \
-            sh -c 'pacman-key --init && \
-                   pacman-key --populate archlinux && \
-                   pacman -Sy --noconfirm pacman-contrib && \
-                   repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst'
+            /bin/sh -ec "pacman-key --init && pacman-key --populate archlinux && pacman -Sy --noconfirm pacman-contrib && repo-add ${PKGBASE}.db.tar.gz x86_64/*.pkg.tar.zst"
 
       - name: Commit & push to gh-pages
         run: |
