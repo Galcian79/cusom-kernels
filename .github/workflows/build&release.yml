@@ -87,7 +87,7 @@ jobs:
 
       - name: Build with makepkg
         run: |
-          sudo -u builder bash -c ""
+          sudo -u builder bash -c "
             mkdir -p ~/build
             cp -r \$GITHUB_WORKSPACE/* ~/build/
             cd ~/build
